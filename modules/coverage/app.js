@@ -271,13 +271,7 @@ function renderResults(results) {
   document.getElementById('mainTabs').addEventListener('click', e => {
     const tab = e.target.closest('.tab');
     if (!tab) return;
-    const tabId = tab.dataset.tab;
-    document.querySelectorAll('#mainTabs .tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    const contentEl = document.getElementById('tab-' + tabId);
-    contentEl.classList.add('active');
-    renderTab(tabId);
+    switchToTab(tab.dataset.tab);
   });
 
   mainContent.addEventListener('click', e => {
@@ -289,15 +283,26 @@ function renderResults(results) {
 
 function coverageClass(v) { return v >= 80 ? 'high' : v >= 50 ? 'mid' : 'low'; }
 
+// タブ切り替えの共通処理
+function switchToTab(tabId) {
+  const tabsEl = document.getElementById('mainTabs');
+  if (!tabsEl) return;
+  tabsEl.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  const targetBtn = tabsEl.querySelector(`[data-tab="${tabId}"]`);
+  if (targetBtn) targetBtn.classList.add('active');
+
+  // tab-content は mainTabs の兄弟要素なのでパネル全体をスコープにする
+  const panelEl = tabsEl.parentElement;
+  panelEl.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  const targetContent = document.getElementById('tab-' + tabId);
+  if (targetContent) targetContent.classList.add('active');
+
+  renderTab(tabId);
+}
+
 // ダッシュボードから未カバー一覧の特定グループへジャンプ
 function jumpToUncovered(factorKey) {
-  document.querySelectorAll('#mainTabs .tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-  const tab = document.querySelector('#mainTabs .tab[data-tab="uncovered"]');
-  if (tab) tab.classList.add('active');
-  const content = document.getElementById('tab-uncovered');
-  if (content) content.classList.add('active');
-  renderTab('uncovered');
+  switchToTab('uncovered');
   setTimeout(() => {
     const panel = document.querySelector(`.uncovered-panel[data-factor-key="${factorKey}"]`);
     if (panel) {
