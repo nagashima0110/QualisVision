@@ -2,7 +2,13 @@
 // QualisCoverage - 分析エンジン
 // =============================================
 
-const EXCLUDE_KEYWORDS = ['結果', '期待', '備考', 'メモ', 'コメント', 'note', 'result', 'expected', 'remark', 'comment', 'pass', 'fail', 'status'];
+const EXCLUDE_KEYWORDS = [
+  // テスト結果・判定系
+  '結果', '期待', '判定', '合否', '備考', 'メモ', 'コメント',
+  'note', 'result', 'expected', 'remark', 'comment', 'pass', 'fail', 'status',
+  // 管理・連番系
+  '番号', '通番', '実施日', '日付', '担当', 'date', 'no.', 'tester', 'author',
+];
 
 // 理論組み合わせ数の上限（これを超えるグループはスキップ）
 const MAX_THEORETICAL_PER_GROUP = 50000;
@@ -60,13 +66,31 @@ function parseExcelData(rawData) {
 }
 
 /**
- * 除外候補列を自動検出
+ * 全値ユニーク＋連番・IDパターンの列を検出（行番号・テストケースIDなど）
  */
-function detectExcludeColumns(headers) {
+function isIdLikeColumn(colValues) {
+  if (colValues.length < 3) return false;
+  const strs = colValues.map(v => String(v).trim());
+  const unique = new Set(strs);
+  if (unique.size !== strs.length) return false; // 重複があれば通常の因子値
+  const idPat = /^[A-Za-z_\-#№.]*\d+[A-Za-z_\-]*$/;
+  const matchCount = strs.filter(v => idPat.test(v)).length;
+  return matchCount / strs.length >= 0.8;
+}
+
+/**
+ * 除外候補列を自動検出（rows を渡すと ID列ヒューリスティックも適用）
+ */
+function detectExcludeColumns(headers, rows) {
   return headers.map((h, i) => {
     const lower = h.toLowerCase();
-    const isExclude = EXCLUDE_KEYWORDS.some(kw => lower.includes(kw.toLowerCase()));
-    return { index: i, name: h, autoExclude: isExclude };
+    const byKeyword = EXCLUDE_KEYWORDS.some(kw => lower.includes(kw.toLowerCase()));
+    let byHeuristic = false;
+    if (!byKeyword && rows && rows.length > 0) {
+      const colValues = rows.map(r => r[i]).filter(v => v != null && v !== '');
+      byHeuristic = isIdLikeColumn(colValues);
+    }
+    return { index: i, name: h, autoExclude: byKeyword || byHeuristic, reason: byHeuristic ? 'ID列' : byKeyword ? 'キーワード' : null };
   });
 }
 

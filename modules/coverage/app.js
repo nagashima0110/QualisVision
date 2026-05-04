@@ -78,7 +78,7 @@ function processFileResult(result, fileName) {
 // ========== 列設定 ==========
 
 function setupColumns() {
-  const detected = AnalysisEngine.detectExcludeColumns(parsedData.headers);
+  const detected = AnalysisEngine.detectExcludeColumns(parsedData.headers, parsedData.rows);
   columnStates = detected.map(d => ({ ...d, active: !d.autoExclude }));
   renderColList();
 }
@@ -92,7 +92,7 @@ function renderColList() {
     item.innerHTML = `
       <div class="col-checkbox"></div>
       <div class="col-name" title="${col.name}">${col.name}</div>
-      ${col.autoExclude ? '<div class="col-badge auto">自動</div>' : ''}
+      ${col.autoExclude ? `<div class="col-badge auto">${col.reason || '自動'}</div>` : ''}
     `;
     item.addEventListener('click', () => { columnStates[i].active = !columnStates[i].active; renderColList(); });
     list.appendChild(item);
@@ -289,6 +289,27 @@ function renderResults(results) {
 
 function coverageClass(v) { return v >= 80 ? 'high' : v >= 50 ? 'mid' : 'low'; }
 
+// ダッシュボードから未カバー一覧の特定グループへジャンプ
+function jumpToUncovered(factorKey) {
+  document.querySelectorAll('#mainTabs .tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  const tab = document.querySelector('#mainTabs .tab[data-tab="uncovered"]');
+  if (tab) tab.classList.add('active');
+  const content = document.getElementById('tab-uncovered');
+  if (content) content.classList.add('active');
+  renderTab('uncovered');
+  setTimeout(() => {
+    const panel = document.querySelector(`.uncovered-panel[data-factor-key="${factorKey}"]`);
+    if (panel) {
+      const body = panel.querySelector('.uncovered-body');
+      if (body && !body.classList.contains('open')) body.classList.add('open');
+      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      panel.style.outline = '2px solid var(--accent2)';
+      setTimeout(() => { panel.style.outline = ''; }, 2000);
+    }
+  }, 50);
+}
+
 // ========== ダッシュボードタブ ==========
 
 function renderDashboardTab(results) {
@@ -357,7 +378,10 @@ function renderDashboardTab(results) {
         ${top5Worst.map(c => {
           const fnames = c.factors.map(fi => headers[fi]).join(' × ');
           const cls = coverageClass(c.coverage);
-          return `<div style="display:flex; align-items:center; gap:10px;">
+          const factorKey = c.factors.join('-');
+          return `<div style="display:flex; align-items:center; gap:10px; cursor:pointer; padding:6px 8px; border-radius:6px; transition:background 0.15s;"
+            onmouseover="this.style.background='var(--surface3)'" onmouseout="this.style.background=''"
+            onclick="jumpToUncovered('${factorKey}')" title="未カバー一覧を表示">
             <span style="font-size:10px; font-family:monospace; color:var(--text3); min-width:30px;">${c.n}因子</span>
             <div style="flex:1; font-size:12px; color:var(--text2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${fnames}">${fnames}</div>
             <div class="progress-wrap" style="flex:none; gap:8px; min-width:180px;">
@@ -365,6 +389,7 @@ function renderDashboardTab(results) {
               <span class="progress-value ${cls}" style="min-width:42px;">${c.coverage}%</span>
             </div>
             <span style="font-size:11px; color:var(--accent3); min-width:55px; text-align:right;">${c.uncoveredCount}件未</span>
+            <span style="font-size:10px; color:var(--text3);">▸</span>
           </div>`;
         }).join('')}
       </div>
@@ -449,7 +474,14 @@ function renderCoverageTab(coverage, headers) {
 // ========== 未カバータブ ==========
 
 function renderUncoveredTab(coverage, headers) {
-  let html = '<div style="padding:16px; display:flex; flex-direction:column; gap:12px;">';
+  let html = `
+    <div style="padding:12px 16px; font-size:12px; color:var(--text2); border-bottom:1px solid var(--border); line-height:1.7;">
+      各グループは<strong style="color:var(--text);">「これらの因子を同時に考えたとき、存在しなければならないはずの値の組み合わせ」</strong>のうち、
+      テストケースに1件も存在しないものを列挙しています。<br>
+      例: OS × ブラウザ × デバイス の組み合わせで「Windows / Firefox / モバイル」という行が1件もなければ未カバーです。
+    </div>
+    <div style="padding:16px; display:flex; flex-direction:column; gap:12px;">
+  `;
   let hasAny = false;
 
   for (const [n, results] of Object.entries(coverage)) {
@@ -459,20 +491,24 @@ function renderUncoveredTab(coverage, headers) {
       hasAny = true;
       const factorNames = r.factors.map(fi => headers[fi]).join(' × ');
       const truncated = r.uncoveredTotal > r.uncoveredCombos.length;
+      const factorKey = r.factors.join('-');
       html += `
-        <div class="uncovered-panel">
+        <div class="uncovered-panel" data-factor-key="${factorKey}">
           <div class="uncovered-header">
             <span>⚠</span>
-            <span class="uncovered-title">${factorNames}</span>
+            <span class="uncovered-title">${n}因子: ${factorNames}</span>
             <span class="uncovered-count">${r.uncoveredTotal}件未カバー</span>
           </div>
           <div class="uncovered-body">
-            ${truncated ? `<div style="font-size:11px; color:var(--accent4); padding-bottom:8px; border-bottom:1px solid var(--border); margin-bottom:8px;">⚠ ${r.uncoveredTotal}件中、最初の${r.uncoveredCombos.length}件を表示</div>` : ''}
+            <div style="font-size:11px; color:var(--text3); margin-bottom:10px;">
+              下記の値の組み合わせを持つテストケースが存在しません
+            </div>
+            ${truncated ? `<div style="font-size:11px; color:var(--accent4); padding-bottom:8px; border-bottom:1px solid var(--border); margin-bottom:8px;">⚠ ${r.uncoveredTotal.toLocaleString()}件中、最初の${r.uncoveredCombos.length}件を表示</div>` : ''}
             <div style="display:flex; gap:8px; padding-bottom:8px; border-bottom:1px solid var(--border); margin-bottom:4px;">
-              ${r.factors.map(fi => `<span style="font-size:10px; color:var(--text3); min-width:80px;">${headers[fi]}</span>`).join('')}
+              ${r.factors.map(fi => `<span style="font-size:10px; font-weight:700; color:var(--accent2); min-width:80px;">${headers[fi]}</span>`).join('<span style="color:var(--text3); font-size:10px; align-self:center;">×</span>')}
             </div>
             ${r.uncoveredCombos.map(combo => `
-              <div class="uncovered-combo">${combo.map(v => `<span class="combo-tag">${v}</span>`).join('')}</div>
+              <div class="uncovered-combo">${combo.map(v => `<span class="combo-tag">${v}</span>`).join('<span style="color:var(--text3); font-size:10px; margin:0 2px;">/</span>')}</div>
             `).join('')}
           </div>
         </div>
