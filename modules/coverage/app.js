@@ -309,16 +309,12 @@ function jumpToUncovered(factorKey) {
       const body = panel.querySelector('.uncovered-body');
       if (body && !body.classList.contains('open')) body.classList.add('open');
 
-      // タブボタン行が画面から消えないようにスクロール位置を計算する
-      // scrollIntoView(panel) はパネルを画面最上部に持ってきてタブボタンを隠すため使わない
+      // タブボタン行を画面最上部に来るようスクロール
+      // panel.scrollIntoView / Math.max 系は tab buttons を画面外に追いやるため使わない
       const tabsEl = document.getElementById('mainTabs');
       if (tabsEl) {
-        const tabsAbsTop  = tabsEl.getBoundingClientRect().top + window.scrollY;
-        const tabsHeight  = tabsEl.offsetHeight;
-        const panelAbsTop = panel.getBoundingClientRect().top  + window.scrollY;
-        // パネルが見えるよう scrollY を設定するが、タブボタン行より上には行かない
-        const targetY = Math.max(tabsAbsTop, panelAbsTop - tabsHeight - 8);
-        window.scrollTo({ top: targetY, behavior: 'smooth' });
+        const tabsAbsTop = tabsEl.getBoundingClientRect().top + window.scrollY;
+        window.scrollTo({ top: tabsAbsTop, behavior: 'smooth' });
       }
 
       panel.style.outline = '2px solid var(--accent2)';
