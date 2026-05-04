@@ -1,13 +1,17 @@
 // =============================================
-// TestCov Analyzer - 分析エンジン
+// QualisCoverage - 分析エンジン
 // =============================================
 
 const EXCLUDE_KEYWORDS = ['結果', '期待', '備考', 'メモ', 'コメント', 'note', 'result', 'expected', 'remark', 'comment', 'pass', 'fail', 'status'];
 
+// 理論組み合わせ数の上限（これを超えるグループはスキップ）
+const MAX_THEORETICAL_PER_GROUP = 50000;
+// 未カバー一覧の表示件数上限
+const MAX_UNCOVERED_DISPLAY = 200;
+
 /**
  * Excelデータをパースしてテストケース行列に変換
  * 結合セルを自動補完する
- * 途中に混入したヘッダー行を自動除去する
  */
 function parseExcelData(rawData) {
   if (!rawData || rawData.length === 0) return { headers: [], rows: [] };
@@ -15,21 +19,18 @@ function parseExcelData(rawData) {
   const headers = rawData[0].map((h, i) => h != null ? String(h).trim() : `列${i + 1}`);
   const headerSet = new Set(headers.filter(h => h !== ''));
   const rows = [];
-
-  // 前の行の値を記憶（結合セル補完用）
   const lastValues = new Array(headers.length).fill(null);
 
   for (let i = 1; i < rawData.length; i++) {
     const row = rawData[i];
     if (!row) continue;
 
-    // 途中に混入したヘッダー行を検出して除去
-    // 行の値がヘッダー名と一致する割合が50%以上なら除去
+    // 途中ヘッダー行の検出: 非空セルの中でヘッダー名と完全一致するものが80%以上
+    // (50%→80%に引き上げて誤判定を減らす)
     const nonEmptyCells = row.filter(v => v != null && String(v).trim() !== '');
-    if (nonEmptyCells.length > 0) {
+    if (nonEmptyCells.length >= 3) {
       const headerMatchCount = nonEmptyCells.filter(v => headerSet.has(String(v).trim())).length;
-      if (headerMatchCount / nonEmptyCells.length >= 0.5) {
-        // ヘッダー行と判定 → スキップ＆結合セル補完をリセット
+      if (headerMatchCount / nonEmptyCells.length >= 0.8) {
         lastValues.fill(null);
         continue;
       }
@@ -45,15 +46,12 @@ function parseExcelData(rawData) {
         filled.push(lastValues[j]);
         hasAnyValue = true;
       } else {
-        // 結合セル補完: 前の値を引き継ぐ
         filled.push(lastValues[j] || '');
         if (lastValues[j]) hasAnyValue = true;
       }
     }
 
-    if (hasAnyValue) {
-      rows.push(filled);
-    }
+    if (hasAnyValue) rows.push(filled);
   }
 
   return { headers, rows };
@@ -76,7 +74,7 @@ function detectExcludeColumns(headers) {
 function getFactorValues(rows, colIndices) {
   const valuesMap = {};
   for (const idx of colIndices) {
-    const vals = [...new Set(rows.map(r => r[idx]).filter(v => v !== ''))];
+    const vals = [...new Set(rows.map(r => r[idx]).filter(v => v != null && v !== ''))];
     valuesMap[idx] = vals;
   }
   return valuesMap;
@@ -89,38 +87,71 @@ function calcCombinationCoverage(rows, colIndices, n) {
   if (colIndices.length < n) return null;
 
   const factorValues = getFactorValues(rows, colIndices);
-
-  // n個の因子の組み合わせを列挙
   const factorCombinations = combinations(colIndices, n);
   const results = [];
 
   for (const factorCombo of factorCombinations) {
-    // この因子の組み合わせで理論上発生しうる値の組み合わせ
     const valueSets = factorCombo.map(fi => factorValues[fi]);
+
+    // 因子の値が空の場合はスキップ（bugfix: theoreticalSize=0→100%問題の防止）
+    if (valueSets.some(vs => !vs || vs.length === 0)) {
+      results.push({
+        factors: factorCombo,
+        theoreticalCount: 0,
+        coveredCount: 0,
+        uncoveredCount: 0,
+        coverage: null,
+        uncoveredCombos: [],
+        uncoveredTotal: 0,
+        skipped: false,
+        warning: '値が存在しない因子が含まれています'
+      });
+      continue;
+    }
+
+    // 理論組み合わせ数を先に見積もり（組み合わせ爆発を防止）
+    const theoreticalSize = valueSets.reduce((acc, vs) => acc * vs.length, 1);
+
+    if (theoreticalSize > MAX_THEORETICAL_PER_GROUP) {
+      results.push({
+        factors: factorCombo,
+        theoreticalCount: theoreticalSize,
+        coveredCount: null,
+        uncoveredCount: null,
+        coverage: null,
+        uncoveredCombos: [],
+        uncoveredTotal: 0,
+        skipped: true,
+        warning: `理論組み合わせ数が${MAX_THEORETICAL_PER_GROUP.toLocaleString()}件を超えるため省略`
+      });
+      continue;
+    }
+
     const theoreticalCombos = cartesianProduct(valueSets);
     const theoreticalSet = new Set(theoreticalCombos.map(c => c.join('\0')));
 
     // 実際のテストケースで現れた組み合わせ
     const actualSet = new Set();
     for (const row of rows) {
-      const key = factorCombo.map(fi => row[fi]).join('\0');
-      if (factorCombo.every(fi => row[fi] !== '')) {
-        actualSet.add(key);
+      if (factorCombo.every(fi => row[fi] != null && row[fi] !== '')) {
+        actualSet.add(factorCombo.map(fi => row[fi]).join('\0'));
       }
     }
 
-    const covered = [...theoreticalSet].filter(k => actualSet.has(k));
-    const uncovered = [...theoreticalSet].filter(k => !actualSet.has(k));
-
-    const coverage = theoreticalSet.size === 0 ? 100 : (covered.length / theoreticalSet.size) * 100;
+    const uncoveredAll = [...theoreticalSet].filter(k => !actualSet.has(k));
+    const coveredCount = theoreticalSet.size - uncoveredAll.length;
+    const coverage = (coveredCount / theoreticalSet.size) * 100;
 
     results.push({
       factors: factorCombo,
       theoreticalCount: theoreticalSet.size,
-      coveredCount: covered.length,
-      uncoveredCount: uncovered.length,
+      coveredCount,
+      uncoveredCount: uncoveredAll.length,
       coverage: Math.round(coverage * 10) / 10,
-      uncoveredCombos: uncovered.map(k => k.split('\0'))
+      uncoveredCombos: uncoveredAll.slice(0, MAX_UNCOVERED_DISPLAY).map(k => k.split('\0')),
+      uncoveredTotal: uncoveredAll.length,
+      skipped: false,
+      warning: null
     });
   }
 
@@ -136,7 +167,7 @@ function analyzeValueBalance(rows, colIndices, headers) {
     const counts = {};
     for (const row of rows) {
       const v = row[idx];
-      if (v !== '') counts[v] = (counts[v] || 0) + 1;
+      if (v != null && v !== '') counts[v] = (counts[v] || 0) + 1;
     }
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
     const entries = Object.entries(counts).map(([val, cnt]) => ({
@@ -160,7 +191,6 @@ function analyzeValueBalance(rows, colIndices, headers) {
  */
 function detectDuplicates(rows, colIndices) {
   const seen = new Map();
-  const duplicates = [];
 
   rows.forEach((row, i) => {
     const key = colIndices.map(fi => row[fi]).join('\0');
@@ -171,6 +201,7 @@ function detectDuplicates(rows, colIndices) {
     }
   });
 
+  const duplicates = [];
   for (const [key, lineNums] of seen) {
     if (lineNums.length > 1) {
       duplicates.push({
@@ -184,49 +215,78 @@ function detectDuplicates(rows, colIndices) {
 }
 
 /**
- * 因子間の共起ヒートマップデータ生成（2因子）
+ * N因子密度マップデータ生成
+ * N=2: 通常の2D行列
+ * N=3: factor3の値ごとにスライスした複数の2D行列
  */
-function calcHeatmapData(rows, colIndices, headers) {
-  if (colIndices.length < 2) return null;
+function calcDensityMapN(rows, factorIndices, headers) {
+  const n = factorIndices.length;
+  if (n < 2) return null;
 
-  const results = [];
-  const factorCombos = combinations(colIndices, 2);
+  if (n === 2) {
+    const [fi, fj] = factorIndices;
+    return calcDensityMap(rows, fi, fj, headers);
+  }
 
-  for (const [fi, fj] of factorCombos) {
-    const valsI = [...new Set(rows.map(r => r[fi]).filter(v => v !== ''))].sort();
-    const valsJ = [...new Set(rows.map(r => r[fj]).filter(v => v !== ''))].sort();
+  // N=3以上: 最後の因子をsliceキーとして使い、残り2因子で2D行列を生成
+  const fi = factorIndices[0];
+  const fj = factorIndices[1];
+  const sliceFactors = factorIndices.slice(2);
 
+  const valsI = [...new Set(rows.map(r => r[fi]).filter(v => v && v !== ''))].sort();
+  const valsJ = [...new Set(rows.map(r => r[fj]).filter(v => v && v !== ''))].sort();
+
+  // sliceファクターの各組み合わせごとに行列を生成
+  const sliceValueSets = sliceFactors.map(sf =>
+    [...new Set(rows.map(r => r[sf]).filter(v => v && v !== ''))].sort()
+  );
+  const sliceCombos = cartesianProduct(sliceValueSets);
+
+  const slices = sliceCombos.map(sliceVals => {
+    const sliceLabel = sliceFactors.map((sf, i) => `${headers[sf]}=${sliceVals[i]}`).join(', ');
     const matrix = {};
     for (const vi of valsI) {
       matrix[vi] = {};
-      for (const vj of valsJ) {
-        matrix[vi][vj] = 0;
-      }
+      for (const vj of valsJ) matrix[vi][vj] = 0;
     }
 
     for (const row of rows) {
+      const matchesSlice = sliceFactors.every((sf, i) => row[sf] === sliceVals[i]);
+      if (!matchesSlice) continue;
       const vi = row[fi], vj = row[fj];
-      if (vi !== '' && vj !== '' && matrix[vi] !== undefined) {
-        matrix[vi][vj] = (matrix[vi][vj] || 0) + 1;
-      }
+      if (vi && vj && matrix[vi]) matrix[vi][vj] = (matrix[vi][vj] || 0) + 1;
     }
 
-    results.push({
+    const theoretical = valsI.length * valsJ.length;
+    const covered = valsI.reduce((acc, vi) =>
+      acc + valsJ.filter(vj => matrix[vi][vj] > 0).length, 0);
+
+    return {
+      label: sliceLabel,
       factor1: { index: fi, name: headers[fi], values: valsI },
       factor2: { index: fj, name: headers[fj], values: valsJ },
-      matrix
-    });
-  }
+      matrix,
+      theoretical,
+      covered,
+      coverage: theoretical > 0 ? Math.round(covered / theoretical * 1000) / 10 : 0
+    };
+  });
 
-  return results;
+  return {
+    type: 'sliced',
+    n,
+    factorIndices,
+    sliceFactors,
+    slices
+  };
 }
 
 /**
- * テストケース密度マップ（2因子選択時）
+ * テストケース密度マップ（2因子）
  */
 function calcDensityMap(rows, fi, fj, headers) {
-  const valsI = [...new Set(rows.map(r => r[fi]).filter(v => v !== ''))].sort();
-  const valsJ = [...new Set(rows.map(r => r[fj]).filter(v => v !== ''))].sort();
+  const valsI = [...new Set(rows.map(r => r[fi]).filter(v => v && v !== ''))].sort();
+  const valsJ = [...new Set(rows.map(r => r[fj]).filter(v => v && v !== ''))].sort();
 
   const matrix = {};
   for (const vi of valsI) {
@@ -243,6 +303,8 @@ function calcDensityMap(rows, fi, fj, headers) {
     acc + valsJ.filter(vj => matrix[vi][vj] > 0).length, 0);
 
   return {
+    type: 'matrix',
+    n: 2,
     factor1: { index: fi, name: headers[fi], values: valsI },
     factor2: { index: fj, name: headers[fj], values: valsJ },
     matrix,
@@ -250,6 +312,35 @@ function calcDensityMap(rows, fi, fj, headers) {
     covered,
     coverage: theoretical > 0 ? Math.round(covered / theoretical * 1000) / 10 : 0
   };
+}
+
+/**
+ * 品質スコア計算（コンサルタント向けサマリ）
+ */
+function calcQualityScore(coverageByN) {
+  const weights = { 2: 1, 3: 2, 4: 3, 5: 4 };
+  let totalWeight = 0;
+  let weightedSum = 0;
+  const breakdown = [];
+
+  for (const [nStr, results] of Object.entries(coverageByN)) {
+    if (!results || results.length === 0) continue;
+    const n = parseInt(nStr);
+    const validResults = results.filter(r => r.coverage !== null && !r.skipped);
+    if (validResults.length === 0) continue;
+
+    const avg = validResults.reduce((s, r) => s + r.coverage, 0) / validResults.length;
+    const min = Math.min(...validResults.map(r => r.coverage));
+    const w = weights[n] || 1;
+
+    totalWeight += w;
+    weightedSum += avg * w;
+
+    breakdown.push({ n, avg: Math.round(avg * 10) / 10, min: Math.round(min * 10) / 10, count: validResults.length });
+  }
+
+  const score = totalWeight > 0 ? Math.round(weightedSum / totalWeight * 10) / 10 : null;
+  return { score, breakdown };
 }
 
 // ユーティリティ: 組み合わせ
@@ -265,6 +356,7 @@ function combinations(arr, n) {
 
 // ユーティリティ: 直積
 function cartesianProduct(arrays) {
+  if (arrays.length === 0) return [[]];
   return arrays.reduce((acc, arr) => {
     const result = [];
     for (const a of acc) {
@@ -281,7 +373,8 @@ window.AnalysisEngine = {
   calcCombinationCoverage,
   analyzeValueBalance,
   detectDuplicates,
-  calcHeatmapData,
   calcDensityMap,
+  calcDensityMapN,
+  calcQualityScore,
   combinations,
 };
