@@ -308,9 +308,21 @@ function jumpToUncovered(factorKey) {
     if (panel) {
       const body = panel.querySelector('.uncovered-body');
       if (body && !body.classList.contains('open')) body.classList.add('open');
-      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+      // タブボタン行が画面から消えないようにスクロール位置を計算する
+      // scrollIntoView(panel) はパネルを画面最上部に持ってきてタブボタンを隠すため使わない
+      const tabsEl = document.getElementById('mainTabs');
+      if (tabsEl) {
+        const tabsAbsTop  = tabsEl.getBoundingClientRect().top + window.scrollY;
+        const tabsHeight  = tabsEl.offsetHeight;
+        const panelAbsTop = panel.getBoundingClientRect().top  + window.scrollY;
+        // パネルが見えるよう scrollY を設定するが、タブボタン行より上には行かない
+        const targetY = Math.max(tabsAbsTop, panelAbsTop - tabsHeight - 8);
+        window.scrollTo({ top: targetY, behavior: 'smooth' });
+      }
+
       panel.style.outline = '2px solid var(--accent2)';
-      setTimeout(() => { panel.style.outline = ''; }, 2000);
+      setTimeout(() => { panel.style.outline = ''; }, 2500);
     }
   }, 50);
 }
