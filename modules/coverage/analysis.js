@@ -20,11 +20,35 @@ const CHUNK_SIZE = 50;
 /**
  * Excelデータをパースしてテストケース行列に変換
  * 結合セルを自動補完する
+ * 書式だけ存在し値が一切ない列（幽霊列）は除外する
  */
 function parseExcelData(rawData) {
   if (!rawData || rawData.length === 0) return { headers: [], rows: [] };
 
-  const headers = rawData[0].map((h, i) => h != null ? String(h).trim() : `列${i + 1}`);
+  const rawHeaders = rawData[0] || [];
+  const totalCols = rawHeaders.length;
+
+  // --- ステップ1: 値が1件でもある列のみ有効列とする ---
+  // 書式だけ適用された空列（例: PictMaster生成ファイルの列7〜53）を除外
+  const colHasContent = new Array(totalCols).fill(false);
+  for (let j = 0; j < totalCols; j++) {
+    if (rawHeaders[j] != null && String(rawHeaders[j]).trim() !== '') colHasContent[j] = true;
+  }
+  for (let i = 1; i < rawData.length; i++) {
+    const row = rawData[i];
+    if (!row) continue;
+    for (let j = 0; j < Math.min(row.length, totalCols); j++) {
+      if (row[j] != null && String(row[j]).trim() !== '') colHasContent[j] = true;
+    }
+  }
+  const validCols = colHasContent.map((has, i) => has ? i : -1).filter(i => i >= 0);
+  if (validCols.length === 0) return { headers: [], rows: [] };
+
+  // --- ステップ2: 有効列のみでヘッダーを構築 ---
+  const headers = validCols.map((ci, ni) => {
+    const h = rawHeaders[ci];
+    return h != null && String(h).trim() !== '' ? String(h).trim() : `列${ni + 1}`;
+  });
   const headerSet = new Set(headers.filter(h => h !== ''));
   const rows = [];
   const lastValues = new Array(headers.length).fill(null);
@@ -33,9 +57,11 @@ function parseExcelData(rawData) {
     const row = rawData[i];
     if (!row) continue;
 
+    // 有効列だけ抽出した行を作成
+    const remapped = validCols.map(ci => (row[ci] != null ? row[ci] : null));
+
     // 途中ヘッダー行の検出: 非空セルの中でヘッダー名と完全一致するものが80%以上
-    // (50%→80%に引き上げて誤判定を減らす)
-    const nonEmptyCells = row.filter(v => v != null && String(v).trim() !== '');
+    const nonEmptyCells = remapped.filter(v => v != null && String(v).trim() !== '');
     if (nonEmptyCells.length >= 3) {
       const headerMatchCount = nonEmptyCells.filter(v => headerSet.has(String(v).trim())).length;
       if (headerMatchCount / nonEmptyCells.length >= 0.8) {
@@ -48,7 +74,7 @@ function parseExcelData(rawData) {
     let hasAnyValue = false;
 
     for (let j = 0; j < headers.length; j++) {
-      const val = row[j];
+      const val = remapped[j];
       if (val != null && String(val).trim() !== '') {
         lastValues[j] = String(val).trim();
         filled.push(lastValues[j]);
