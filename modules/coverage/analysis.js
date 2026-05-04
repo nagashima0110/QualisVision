@@ -8,6 +8,8 @@ const EXCLUDE_KEYWORDS = ['結果', '期待', '備考', 'メモ', 'コメント'
 const MAX_THEORETICAL_PER_GROUP = 50000;
 // 未カバー一覧の表示件数上限
 const MAX_UNCOVERED_DISPLAY = 200;
+// 因子グループ数の上限（C(n,N)がこれを超えるNはまるごとスキップ）
+const MAX_FACTOR_GROUPS = 500;
 
 /**
  * Excelデータをパースしてテストケース行列に変換
@@ -88,6 +90,24 @@ function calcCombinationCoverage(rows, colIndices, n) {
 
   const factorValues = getFactorValues(rows, colIndices);
   const factorCombinations = combinations(colIndices, n);
+
+  // 因子グループ数が多すぎる場合はN全体をスキップ（レンダラークラッシュ防止）
+  if (factorCombinations.length > MAX_FACTOR_GROUPS) {
+    return [{
+      factors: [],
+      groupSkipped: true,
+      skipped: true,
+      groupCount: factorCombinations.length,
+      theoreticalCount: 0,
+      coveredCount: null,
+      uncoveredCount: null,
+      coverage: null,
+      uncoveredCombos: [],
+      uncoveredTotal: 0,
+      warning: `${n}因子グループ数が${factorCombinations.length.toLocaleString()}件（上限${MAX_FACTOR_GROUPS}件）を超えるため計算を省略しました`
+    }];
+  }
+
   const results = [];
 
   for (const factorCombo of factorCombinations) {

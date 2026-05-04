@@ -6,6 +6,8 @@ let parsedData = null;
 let columnStates = [];
 let selectedN = new Set([2, 3]);
 let lastResults = null;
+let tabRenderers = {};
+let renderedTabs = new Set();
 
 // ========== ファイル読み込み ==========
 
@@ -151,6 +153,16 @@ async function runAnalysis() {
 
 // ========== 結果レンダリング ==========
 
+function renderTab(tabId) {
+  if (renderedTabs.has(tabId)) return;
+  const renderer = tabRenderers[tabId];
+  if (!renderer) return;
+  const el = document.getElementById('tab-' + tabId);
+  if (!el) return;
+  el.innerHTML = renderer();
+  renderedTabs.add(tabId);
+}
+
 function renderResults(results) {
   const { coverage, valueBalance, duplicates, qualityScore, activeFactors, totalRows, headers } = results;
 
@@ -207,6 +219,7 @@ function renderResults(results) {
   `;
   mainContent.insertAdjacentHTML('beforeend', summaryHtml);
 
+  // タブ骨格のみ先に挿入（コンテンツは遅延レンダリング）
   const tabAreaHtml = `
     <div class="panel">
       <div class="tabs" id="mainTabs">
@@ -218,24 +231,42 @@ function renderResults(results) {
         <div class="tab" data-tab="duplicates">重複ケース ${duplicates.length > 0 ? `<span style="color:var(--accent3)">(${duplicates.length})</span>` : ''}</div>
         <div class="tab" data-tab="factors">因子値サマリー</div>
       </div>
-      <div class="tab-content active" id="tab-dashboard">${renderDashboardTab(results)}</div>
-      <div class="tab-content" id="tab-coverage">${renderCoverageTab(coverage, headers)}</div>
-      <div class="tab-content" id="tab-uncovered">${renderUncoveredTab(coverage, headers)}</div>
-      <div class="tab-content" id="tab-balance">${renderBalanceTab(valueBalance)}</div>
-      <div class="tab-content" id="tab-heatmap">${renderHeatmapTab()}</div>
-      <div class="tab-content" id="tab-duplicates">${renderDuplicatesTab(duplicates, activeFactors, headers)}</div>
-      <div class="tab-content" id="tab-factors">${renderFactorsTab(results.factorValues, activeFactors, headers)}</div>
+      <div class="tab-content active" id="tab-dashboard"></div>
+      <div class="tab-content" id="tab-coverage"></div>
+      <div class="tab-content" id="tab-uncovered"></div>
+      <div class="tab-content" id="tab-balance"></div>
+      <div class="tab-content" id="tab-heatmap"></div>
+      <div class="tab-content" id="tab-duplicates"></div>
+      <div class="tab-content" id="tab-factors"></div>
     </div>
   `;
   mainContent.insertAdjacentHTML('beforeend', tabAreaHtml);
 
+  // 各タブのレンダラーを登録
+  renderedTabs = new Set();
+  tabRenderers = {
+    dashboard:  () => renderDashboardTab(results),
+    coverage:   () => renderCoverageTab(coverage, headers),
+    uncovered:  () => renderUncoveredTab(coverage, headers),
+    balance:    () => renderBalanceTab(valueBalance),
+    heatmap:    () => renderHeatmapTab(),
+    duplicates: () => renderDuplicatesTab(duplicates, activeFactors, headers),
+    factors:    () => renderFactorsTab(results.factorValues, activeFactors, headers),
+  };
+
+  // デフォルトのダッシュボードだけ即時レンダリング
+  renderTab('dashboard');
+
   document.getElementById('mainTabs').addEventListener('click', e => {
     const tab = e.target.closest('.tab');
     if (!tab) return;
+    const tabId = tab.dataset.tab;
     document.querySelectorAll('#mainTabs .tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
-    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    const contentEl = document.getElementById('tab-' + tabId);
+    contentEl.classList.add('active');
+    renderTab(tabId);
   });
 
   mainContent.addEventListener('click', e => {
@@ -381,6 +412,7 @@ function renderCoverageTab(coverage, headers) {
           </thead>
           <tbody>
             ${results.map(r => {
+              if (r.groupSkipped) return `<tr><td colspan="${parseInt(n)+4}" style="color:var(--accent4);font-size:11px;padding:10px;text-align:center;">⚠ ${r.warning}</td></tr>`;
               if (r.skipped) return `<tr>${r.factors.map(fi=>`<td>${headers[fi]}</td>`).join('')}<td colspan="3" style="color:var(--text3);font-size:11px;">理論数 ${r.theoreticalCount.toLocaleString()}件 — 計算上限超過</td><td style="color:var(--text3);font-size:11px;">省略</td></tr>`;
               if (r.warning && r.coverage === null) return `<tr>${r.factors.map(fi=>`<td>${headers[fi]}</td>`).join('')}<td colspan="4" style="color:var(--text3);font-size:11px;">${r.warning}</td></tr>`;
               return `<tr>
@@ -413,7 +445,7 @@ function renderUncoveredTab(coverage, headers) {
   for (const [n, results] of Object.entries(coverage)) {
     if (!results) continue;
     for (const r of results) {
-      if (r.skipped || r.coverage === null || r.uncoveredCount === 0) continue;
+      if (r.groupSkipped || r.skipped || r.coverage === null || r.uncoveredCount === 0) continue;
       hasAny = true;
       const factorNames = r.factors.map(fi => headers[fi]).join(' × ');
       const truncated = r.uncoveredTotal > r.uncoveredCombos.length;

@@ -14,7 +14,9 @@ window.ExportUtils = {
 
     for (const r of coverageResults) {
       const factorNames = r.factors.map(fi => headers[fi]).join(',');
-      if (r.skipped) {
+      if (r.groupSkipped) {
+        lines.push(`${r.warning || 'グループ数上限超過'},,,,,"省略"`);
+      } else if (r.skipped) {
         lines.push(`${factorNames},${r.theoreticalCount},,,,"計算上限超過"`);
       } else if (r.coverage === null) {
         lines.push(`${factorNames},0,,,,"${r.warning || ''}"`);
@@ -69,7 +71,9 @@ window.ExportUtils = {
       const factorHeaders = Array.from({length: nInt}, (_, i) => `因子${i + 1}`);
       sheetData.push([...factorHeaders, '理論数', 'カバー済み', '未カバー', 'カバレッジ(%)', '備考']);
       for (const r of results) {
-        if (r.skipped) {
+        if (r.groupSkipped) {
+          sheetData.push([r.warning || 'グループ数上限超過', '', '', '', '', '省略']);
+        } else if (r.skipped) {
           sheetData.push([...r.factors.map(fi => headers[fi]), r.theoreticalCount, '', '', '', '計算上限超過']);
         } else if (r.coverage === null) {
           sheetData.push([...r.factors.map(fi => headers[fi]), 0, '', '', '', r.warning || '']);
