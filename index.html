@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QualisVision</title>
+<style>
+  :root {
+    --bg: #0a0c10;
+    --surface: #12151c;
+    --surface2: #1a1e28;
+    --surface3: #222736;
+    --border: #2a2f3d;
+    --accent: #4fffb0;
+    --accent2: #7b6cff;
+    --accent3: #ff6b6b;
+    --accent4: #ffd166;
+    --text: #e8eaf0;
+    --text2: #8892a4;
+    --text3: #4a5568;
+    --radius: 12px;
+    --radius-sm: 6px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic UI', 'Meiryo', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ========== TITLEBAR ========== */
+  .titlebar {
+    height: 48px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    -webkit-app-region: drag;
+    flex-shrink: 0;
+    gap: 12px;
+  }
+  .titlebar-logo {
+    font-size: 16px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    -webkit-app-region: no-drag;
+  }
+  .titlebar-logo span { color: var(--text2); font-weight: 400; }
+  .titlebar-version {
+    font-family: 'IBM Plex Mono', 'Consolas', monospace;
+    font-size: 11px;
+    color: var(--text3);
+    margin-left: 4px;
+  }
+  .titlebar-spacer { flex: 1; }
+  .titlebar-tagline {
+    font-size: 11px;
+    color: var(--text3);
+    -webkit-app-region: no-drag;
+  }
+
+  /* ========== HOME ========== */
+  .home {
+    flex: 1;
+    overflow-y: auto;
+    padding: 48px 56px;
+    display: flex;
+    flex-direction: column;
+    gap: 48px;
+  }
+
+  /* ========== HERO ========== */
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .hero-eyebrow {
+    font-family: 'IBM Plex Mono', 'Consolas', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .hero-title {
+    font-size: 30px;
+    font-weight: 800;
+    color: var(--text);
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+  }
+  .hero-sub {
+    font-size: 14px;
+    color: var(--text2);
+    margin-top: 4px;
+    line-height: 1.6;
+  }
+
+  /* ========== SECTION ========== */
+  .section { display: flex; flex-direction: column; gap: 16px; }
+  .section-label {
+    font-family: 'IBM Plex Mono', 'Consolas', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text3);
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* ========== MODULE GRID ========== */
+  .module-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
+  }
+
+  .module-card {
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .module-card::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+  }
+  .module-card.coverage::after { background: var(--accent); }
+  .module-card.bug::after      { background: var(--accent2); }
+  .module-card.progress::after { background: var(--accent4); }
+  .module-card.risk::after     { background: var(--accent3); }
+
+  .module-card:hover:not(.disabled) {
+    transform: translateY(-3px);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.4);
+  }
+  .module-card.coverage:hover:not(.disabled) { border-color: var(--accent); box-shadow: 0 12px 40px rgba(79,255,176,0.12); }
+  .module-card.bug:hover:not(.disabled)      { border-color: var(--accent2); box-shadow: 0 12px 40px rgba(123,108,255,0.12); }
+  .module-card.disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .module-icon {
+    font-size: 30px;
+    margin-bottom: 14px;
+    display: block;
+  }
+  .module-name {
+    font-family: 'IBM Plex Mono', 'Consolas', monospace;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    margin-bottom: 8px;
+  }
+  .module-card.coverage .module-name { color: var(--accent); }
+  .module-card.bug .module-name      { color: var(--accent2); }
+  .module-card.progress .module-name { color: var(--accent4); }
+  .module-card.risk .module-name     { color: var(--accent3); }
+
+  .module-desc {
+    font-size: 12px;
+    color: var(--text2);
+    line-height: 1.7;
+    flex: 1;
+    margin-bottom: 14px;
+  }
+  .module-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .module-tag {
+    font-family: 'IBM Plex Mono', 'Consolas', monospace;
+    font-size: 10px;
+    padding: 3px 9px;
+    border-radius: 20px;
+  }
+  .module-card.coverage .module-tag { background: rgba(79,255,176,0.1); color: var(--accent); border: 1px solid rgba(79,255,176,0.25); }
+  .module-card.bug .module-tag      { background: rgba(123,108,255,0.1); color: var(--accent2); border: 1px solid rgba(123,108,255,0.25); }
+  .module-tag.soon { background: rgba(74,85,104,0.2); color: var(--text3); border: 1px solid var(--border); }
+
+  .module-arrow {
+    font-size: 16px;
+    color: var(--text3);
+    transition: transform 0.2s, color 0.2s;
+  }
+  .module-card:hover:not(.disabled) .module-arrow { transform: translateX(4px); }
+  .module-card.coverage:hover:not(.disabled) .module-arrow { color: var(--accent); }
+  .module-card.bug:hover:not(.disabled) .module-arrow      { color: var(--accent2); }
+  .module-card.disabled .module-arrow { display: none; }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text3); }
+</style>
+</head>
+<body>
+
+<div class="titlebar">
+  <span class="titlebar-logo">Qualis<span>Vision</span></span>
+  <span class="titlebar-version">v0.1.0</span>
+  <div class="titlebar-spacer"></div>
+  <span class="titlebar-tagline">Quality Analysis Platform</span>
+</div>
+
+<div class="home">
+
+  <div class="hero">
+    <div class="hero-eyebrow">Quality Analysis Platform</div>
+    <div class="hero-title">品質の現実を、データで示す。</div>
+    <div class="hero-sub">
+      QualisVision は品質コンサルタントのための総合分析ツールです。<br>
+      テストケース・不具合レポートを読み込み、品質状況の根拠となるデータを生成します。
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-label">分析モジュール</div>
+    <div class="module-grid">
+
+      <div class="module-card coverage" onclick="openModule('modules/coverage/index.html')">
+        <span class="module-icon">🔬</span>
+        <div class="module-name">QualisCoverage</div>
+        <div class="module-desc">
+          テストケースの Excelファイルを読み込み、組み合わせカバレッジを多角的に分析します。
+          未カバー組み合わせの特定、値バランス分析、重複ケース検出、密度マップを提供します。
+        </div>
+        <div class="module-footer">
+          <span class="module-tag">v0.1.0</span>
+          <span class="module-arrow">→</span>
+        </div>
+      </div>
+
+      <div class="module-card bug disabled">
+        <span class="module-icon">🐛</span>
+        <div class="module-name">QualisBug</div>
+        <div class="module-desc">
+          不具合レポートを分析し、信頼性成長モデル（ゴンペルツ・ロジスティック曲線）で
+          バグ収束を予測します。重症度分析・モジュール別バグ密度・TTR分布なども提供予定です。
+        </div>
+        <div class="module-footer">
+          <span class="module-tag soon">準備中</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<script>
+function openModule(path) {
+  window.location.href = path;
+}
+</script>
+</body>
+</html>
