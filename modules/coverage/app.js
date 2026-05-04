@@ -119,36 +119,47 @@ async function runAnalysis() {
   const activeIndices = columnStates.filter(c => c.active).map(c => c.index);
   if (activeIndices.length < 2) { alert('分析対象列を2列以上選択してください'); return; }
 
-  showLoading('組み合わせを計算中...');
-  setTimeout(async () => {
-    try {
-      const { headers, rows } = parsedData;
-      const coverage = {};
+  showLoading('分析を開始中...');
+  await new Promise(r => setTimeout(r, 50)); // ローディング表示を待つ
 
-      for (const n of [...selectedN].sort()) {
-        if (activeIndices.length >= n) {
-          setLoadingText(`${n}因子間の組み合わせを計算中...`);
-          coverage[n] = AnalysisEngine.calcCombinationCoverage(rows, activeIndices, n);
-        }
+  try {
+    const { headers, rows } = parsedData;
+    const coverage = {};
+
+    for (const n of [...selectedN].sort()) {
+      if (activeIndices.length >= n) {
+        const groupTotal = AnalysisEngine.combinationsCount(activeIndices.length, n);
+        setLoadingText(`${n}因子間を計算中... (0 / ${groupTotal.toLocaleString()} グループ)`);
+        await new Promise(r => setTimeout(r, 0));
+
+        coverage[n] = await AnalysisEngine.calcCombinationCoverageAsync(
+          rows, activeIndices, n,
+          (done, total) => setLoadingText(`${n}因子間を計算中... (${done.toLocaleString()} / ${total.toLocaleString()} グループ)`)
+        );
+        setLoadingText(`${n}因子間を計算中... (${groupTotal.toLocaleString()} / ${groupTotal.toLocaleString()} グループ) ✓`);
       }
-
-      setLoadingText('値バランスを分析中...');
-      const valueBalance = AnalysisEngine.analyzeValueBalance(rows, activeIndices, headers);
-      setLoadingText('重複ケースを検出中...');
-      const duplicates = AnalysisEngine.detectDuplicates(rows, activeIndices);
-      setLoadingText('品質スコアを計算中...');
-      const qualityScore = AnalysisEngine.calcQualityScore(coverage);
-      const factorValues = AnalysisEngine.getFactorValues(rows, activeIndices);
-
-      lastResults = { coverage, valueBalance, duplicates, qualityScore, factorValues, activeFactors: activeIndices, totalRows: rows.length, headers, rows };
-      renderResults(lastResults);
-    } catch (e) {
-      alert('分析中にエラーが発生しました: ' + e.message);
-      console.error(e);
-    } finally {
-      hideLoading();
     }
-  }, 50);
+
+    setLoadingText('値バランスを分析中...');
+    await new Promise(r => setTimeout(r, 0));
+    const valueBalance = AnalysisEngine.analyzeValueBalance(rows, activeIndices, headers);
+
+    setLoadingText('重複ケースを検出中...');
+    await new Promise(r => setTimeout(r, 0));
+    const duplicates = AnalysisEngine.detectDuplicates(rows, activeIndices);
+
+    setLoadingText('品質スコアを計算中...');
+    const qualityScore = AnalysisEngine.calcQualityScore(coverage);
+    const factorValues = AnalysisEngine.getFactorValues(rows, activeIndices);
+
+    lastResults = { coverage, valueBalance, duplicates, qualityScore, factorValues, activeFactors: activeIndices, totalRows: rows.length, headers, rows };
+    renderResults(lastResults);
+  } catch (e) {
+    alert('分析中にエラーが発生しました: ' + e.message);
+    console.error(e);
+  } finally {
+    hideLoading();
+  }
 }
 
 // ========== 結果レンダリング ==========
@@ -412,7 +423,6 @@ function renderCoverageTab(coverage, headers) {
           </thead>
           <tbody>
             ${results.map(r => {
-              if (r.groupSkipped) return `<tr><td colspan="${parseInt(n)+4}" style="color:var(--accent4);font-size:11px;padding:10px;text-align:center;">⚠ ${r.warning}</td></tr>`;
               if (r.skipped) return `<tr>${r.factors.map(fi=>`<td>${headers[fi]}</td>`).join('')}<td colspan="3" style="color:var(--text3);font-size:11px;">理論数 ${r.theoreticalCount.toLocaleString()}件 — 計算上限超過</td><td style="color:var(--text3);font-size:11px;">省略</td></tr>`;
               if (r.warning && r.coverage === null) return `<tr>${r.factors.map(fi=>`<td>${headers[fi]}</td>`).join('')}<td colspan="4" style="color:var(--text3);font-size:11px;">${r.warning}</td></tr>`;
               return `<tr>
@@ -445,7 +455,7 @@ function renderUncoveredTab(coverage, headers) {
   for (const [n, results] of Object.entries(coverage)) {
     if (!results) continue;
     for (const r of results) {
-      if (r.groupSkipped || r.skipped || r.coverage === null || r.uncoveredCount === 0) continue;
+      if (r.skipped || r.coverage === null || r.uncoveredCount === 0) continue;
       hasAny = true;
       const factorNames = r.factors.map(fi => headers[fi]).join(' × ');
       const truncated = r.uncoveredTotal > r.uncoveredCombos.length;

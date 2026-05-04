@@ -8,8 +8,8 @@ const EXCLUDE_KEYWORDS = ['結果', '期待', '備考', 'メモ', 'コメント'
 const MAX_THEORETICAL_PER_GROUP = 50000;
 // 未カバー一覧の表示件数上限
 const MAX_UNCOVERED_DISPLAY = 200;
-// 因子グループ数の上限（C(n,N)がこれを超えるNはまるごとスキップ）
-const MAX_FACTOR_GROUPS = 500;
+// チャンク処理: 何グループ処理するごとにUIに制御を返すか
+const CHUNK_SIZE = 50;
 
 /**
  * Excelデータをパースしてテストケース行列に変換
@@ -83,34 +83,25 @@ function getFactorValues(rows, colIndices) {
 }
 
 /**
- * N因子間の組み合わせカバレッジを計算
+ * N因子間の組み合わせカバレッジを計算（非同期・チャンク処理）
+ * progressCallback(done, total) を CHUNK_SIZE グループごとに呼び出す
  */
-function calcCombinationCoverage(rows, colIndices, n) {
+async function calcCombinationCoverageAsync(rows, colIndices, n, progressCallback) {
   if (colIndices.length < n) return null;
 
   const factorValues = getFactorValues(rows, colIndices);
   const factorCombinations = combinations(colIndices, n);
-
-  // 因子グループ数が多すぎる場合はN全体をスキップ（レンダラークラッシュ防止）
-  if (factorCombinations.length > MAX_FACTOR_GROUPS) {
-    return [{
-      factors: [],
-      groupSkipped: true,
-      skipped: true,
-      groupCount: factorCombinations.length,
-      theoreticalCount: 0,
-      coveredCount: null,
-      uncoveredCount: null,
-      coverage: null,
-      uncoveredCombos: [],
-      uncoveredTotal: 0,
-      warning: `${n}因子グループ数が${factorCombinations.length.toLocaleString()}件（上限${MAX_FACTOR_GROUPS}件）を超えるため計算を省略しました`
-    }];
-  }
-
+  const total = factorCombinations.length;
   const results = [];
 
-  for (const factorCombo of factorCombinations) {
+  for (let i = 0; i < total; i++) {
+    // CHUNK_SIZE ごとに UI スレッドに制御を返す
+    if (i > 0 && i % CHUNK_SIZE === 0) {
+      if (progressCallback) progressCallback(i, total);
+      await new Promise(r => setTimeout(r, 0));
+    }
+
+    const factorCombo = factorCombinations[i];
     const valueSets = factorCombo.map(fi => factorValues[fi]);
 
     // 因子の値が空の場合はスキップ（bugfix: theoreticalSize=0→100%問題の防止）
@@ -176,6 +167,16 @@ function calcCombinationCoverage(rows, colIndices, n) {
   }
 
   return results;
+}
+
+// 因子グループ数の事前計算（配列を生成せず数値だけ返す）
+function combinationsCount(n, k) {
+  if (k > n || k < 0) return 0;
+  if (k === 0 || k === n) return 1;
+  k = Math.min(k, n - k);
+  let c = 1;
+  for (let i = 0; i < k; i++) c = c * (n - i) / (i + 1);
+  return Math.round(c);
 }
 
 /**
@@ -390,7 +391,8 @@ window.AnalysisEngine = {
   parseExcelData,
   detectExcludeColumns,
   getFactorValues,
-  calcCombinationCoverage,
+  calcCombinationCoverageAsync,
+  combinationsCount,
   analyzeValueBalance,
   detectDuplicates,
   calcDensityMap,
