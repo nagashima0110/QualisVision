@@ -252,12 +252,14 @@ function setupAnalysisButton() {
   document.getElementById('runBtn').addEventListener('click', runAnalysis);
 }
 
+const yield_ = () => new Promise(r => setTimeout(r, 0));
+
 async function runAnalysis() {
   columnMapping = readMapping();
   const engine = window.BugAnalysisEngine;
-  showLoading('バグデータを解析中…');
 
-  await new Promise(r => setTimeout(r, 0));
+  showLoading('バグレコードをマッピング中…');
+  await yield_();
 
   bugs = engine.mapBugRecords(rawData.rows, columnMapping);
   if (bugs.length === 0) {
@@ -266,9 +268,19 @@ async function runAnalysis() {
     return;
   }
 
+  showLoading(`${bugs.length}件のバグを分析中…`);
+  await yield_();
+
   const timeSeries = engine.buildTimeSeries(bugs, 7);
-  const gompertz   = timeSeries ? engine.fitGompertz(timeSeries.series) : null;
-  const logistic   = timeSeries ? engine.fitLogistic(timeSeries.series) : null;
+
+  showLoading('信頼性成長曲線をフィッティング中…');
+  await yield_();
+  const gompertz = timeSeries ? engine.fitGompertz(timeSeries.series) : null;
+  await yield_();
+  const logistic = timeSeries ? engine.fitLogistic(timeSeries.series) : null;
+
+  showLoading('パレート・DRE・工程分析中…');
+  await yield_();
 
   analysisResult = {
     bugs,
@@ -277,18 +289,21 @@ async function runAnalysis() {
     gompertz,
     logistic,
     pareto: {
-      cause:    engine.calcPareto(bugs, 'cause'),
-      module:   engine.calcPareto(bugs, 'module'),
-      assignee: engine.calcPareto(bugs, 'assignee'),
-      severity: engine.calcPareto(bugs, 'severity'),
+      cause:      engine.calcPareto(bugs, 'cause'),
+      module:     engine.calcPareto(bugs, 'module'),
+      assignee:   engine.calcPareto(bugs, 'assignee'),
+      severity:   engine.calcPareto(bugs, 'severity'),
       foundPhase: engine.calcPareto(bugs, 'foundPhase'),
     },
-    dre:        engine.calcDRE(bugs),
-    fixDuration:engine.calcFixDuration(bugs),
-    regression: engine.calcRegressionRate(bugs),
-    zone:       engine.calcZoneAnalysis(bugs, effortMap),
-    odc:        engine.calcODC(bugs),
+    dre:         engine.calcDRE(bugs),
+    fixDuration: engine.calcFixDuration(bugs),
+    regression:  engine.calcRegressionRate(bugs),
+    zone:        engine.calcZoneAnalysis(bugs, effortMap),
+    odc:         engine.calcODC(bugs),
   };
+
+  showLoading('ダッシュボードを描画中…');
+  await yield_();
 
   renderedTabs.clear();
   buildTabRenderers();
