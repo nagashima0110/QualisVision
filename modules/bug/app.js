@@ -102,7 +102,7 @@ async function loadFileFromPath(filePath) {
     applyAutoMapping();
     document.getElementById('fileInfo').textContent =
       `${fileName}  /  ${fileHeaders.length}列・${parsed.rows.length}行`;
-    document.getElementById('mappingSection').style.display = '';
+    document.getElementById('mappingSection').style.display = 'block';
     document.getElementById('runBtn').disabled = false;
   } catch (err) {
     showError('ファイル読み込みエラー: ' + err.message);
@@ -352,13 +352,13 @@ function renderTab(tabId) {
 function showResults() {
   document.getElementById('uploadSection').style.display = 'none';
   document.getElementById('mappingSection').style.display = 'none';
-  document.getElementById('resultsSection').style.display = '';
-  document.getElementById('backBtn').style.display = '';
+  document.getElementById('resultsSection').style.display = 'block';
+  document.getElementById('backBtn').style.display = 'inline-flex';
 }
 
 function goBack() {
-  document.getElementById('uploadSection').style.display = '';
-  document.getElementById('mappingSection').style.display = '';
+  document.getElementById('uploadSection').style.display = 'block';
+  document.getElementById('mappingSection').style.display = 'block';
   document.getElementById('resultsSection').style.display = 'none';
   document.getElementById('backBtn').style.display = 'none';
   analysisResult = null;
@@ -710,6 +710,6 @@ function hideLoading() {
 function showError(msg) {
   const el = document.getElementById('errorMsg');
   el.textContent = msg;
-  el.style.display = '';
+  el.style.display = 'block';
   setTimeout(() => { el.style.display = 'none'; }, 6000);
 }
