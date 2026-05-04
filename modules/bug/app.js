@@ -60,38 +60,40 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function setupFileUpload() {
   const dropZone = document.getElementById('dropZone');
-  const fileInput = document.getElementById('fileInput');
 
-  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('click', async () => {
+    const filePath = await window.electronAPI.openFileDialog();
+    if (filePath) loadFileFromPath(filePath);
+  });
   dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
   dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
   dropZone.addEventListener('drop', e => {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
     const file = e.dataTransfer.files[0];
-    if (file) loadFile(file.path || file.name, file);
-  });
-
-  fileInput.addEventListener('change', e => {
-    const file = e.target.files[0];
-    if (file) loadFile(file.path || file.name, file);
+    if (file && file.path) loadFileFromPath(file.path);
   });
 }
 
-async function loadFile(path, fileObj) {
+async function loadFileFromPath(filePath) {
+  showLoading('ファイルを読み込んでいます…');
   try {
-    showLoading('ファイルを読み込んでいます…');
-    let data;
-    if (window.electronAPI) {
-      data = await window.electronAPI.readFile(path);
+    const result = await window.electronAPI.readFile(filePath);
+    const fileName = filePath.split(/[\\/]/).pop();
+
+    let rawRows;
+    if (result.type === 'excel') {
+      const wb = XLSX.read(result.data, { type: 'base64' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, blankrows: false });
     } else {
-      data = await readFileInBrowser(fileObj);
+      rawRows = result.data;
     }
+
     const engine = window.BugAnalysisEngine;
-    const parsed = engine.parseBugExcel(data);
+    const parsed = engine.parseBugExcel(rawRows);
     if (parsed.headers.length === 0) {
-      hideLoading();
-      showError('ファイルを解析できませんでした。Excelまたはファイル形式を確認してください。');
+      showError('ファイルを解析できませんでした。Excel形式を確認してください。');
       return;
     }
     rawData = parsed;
@@ -99,29 +101,15 @@ async function loadFile(path, fileObj) {
     updateMappingDropdowns();
     applyAutoMapping();
     document.getElementById('fileInfo').textContent =
-      `${fileObj.name || path}  /  ${fileHeaders.length}列・${parsed.rows.length}行`;
+      `${fileName}  /  ${fileHeaders.length}列・${parsed.rows.length}行`;
     document.getElementById('mappingSection').style.display = '';
     document.getElementById('runBtn').disabled = false;
-    hideLoading();
   } catch (err) {
-    hideLoading();
     showError('ファイル読み込みエラー: ' + err.message);
+    console.error(err);
+  } finally {
+    hideLoading();
   }
-}
-
-async function readFileInBrowser(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = e => {
-      try {
-        const wb = XLSX.read(e.target.result, { type: 'binary' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        resolve(XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }));
-      } catch (err) { reject(err); }
-    };
-    reader.onerror = reject;
-    reader.readAsBinaryString(file);
-  });
 }
 
 // ========== カラムマッピングUI ==========
