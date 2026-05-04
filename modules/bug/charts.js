@@ -84,13 +84,18 @@ function renderParetoChart(container, data, title) {
 // =============================================
 // 信頼性成長曲線
 // =============================================
-function renderLineChart(container, series, preds, title) {
+// models: [{predicted:[{t,predicted,...}], t95, type, mse, total}, ...] の配列
+function renderLineChart(container, series, models, title) {
   if (!series || !series.length) { noData(container, '発見日データが不足しています'); return; }
+  const validModels = (models || []).filter(m => m && m.predicted && m.predicted.length);
   const W = 760, H = 330, ml = 60, mr = 20, mt = 34, mb = 50;
   const pw = W - ml - mr, ph = H - mt - mb;
-  const allY = [...series.map(p => p.cumulative), ...preds.flatMap(p => p.map(q => q.predicted || 0))];
+  const allY = [
+    ...series.map(p => p.cumulative),
+    ...validModels.flatMap(m => m.predicted.map(p => p.predicted || 0)),
+  ];
   const maxY = Math.max(...allY, 1) * 1.05;
-  const maxT = Math.max(series.length, ...preds.map(p => p.length)) - 1;
+  const maxT = Math.max(series.length, ...validModels.map(m => m.predicted.length)) - 1;
   const xS = scl(0, maxT, ml, ml + pw);
   const yS = scl(0, maxY, mt + ph, mt);
 
@@ -99,16 +104,18 @@ function renderLineChart(container, series, preds, title) {
 
   const pColors = [BC.accent3, BC.accent2];
   let predSvg = '', legendSvg = '';
-  preds.forEach((pred, pi) => {
+  validModels.forEach((model, pi) => {
     const col = pColors[pi];
-    const path = pred.map((p, i) => `${i === 0 ? 'M' : 'L'}${xS(i).toFixed(1)},${yS(p.predicted).toFixed(1)}`).join('');
+    const path = model.predicted.map((p, i) => `${i === 0 ? 'M' : 'L'}${xS(i).toFixed(1)},${yS(p.predicted).toFixed(1)}`).join('');
     predSvg += `<path d="${path}" fill="none" stroke="${col}" stroke-width="2" stroke-dasharray="${pi === 1 ? '6,3' : ''}"/>`;
-    if (pred.t95 != null && pred.t95 <= maxT) {
-      const x95 = xS(pred.t95).toFixed(1);
+    if (model.t95 != null && model.t95 <= maxT) {
+      const x95 = xS(model.t95).toFixed(1);
       predSvg += `<line x1="${x95}" y1="${mt}" x2="${x95}" y2="${mt + ph}" stroke="${col}" stroke-width="1" stroke-dasharray="3,3" opacity="0.5"/>`;
     }
     const lx = ml + pi * 200, ly = H - 18;
-    const label = pred.type === 'gompertz' ? `ゴンペルツ (R²≈${(1 - pred.mse / (maxY * maxY / 4)).toFixed(2)})` : `ロジスティック (R²≈${(1 - pred.mse / (maxY * maxY / 4)).toFixed(2)})`;
+    const label = model.type === 'gompertz'
+      ? `ゴンペルツ (R²≈${Math.max(0, 1 - model.mse / Math.max(maxY * maxY / 4, 1)).toFixed(2)})`
+      : `ロジスティック (R²≈${Math.max(0, 1 - model.mse / Math.max(maxY * maxY / 4, 1)).toFixed(2)})`;
     legendSvg += `<line x1="${lx}" y1="${ly}" x2="${lx + 20}" y2="${ly}" stroke="${col}" stroke-width="2" stroke-dasharray="${pi === 1 ? '6,3' : ''}"/>
       <text x="${lx + 25}" y="${ly + 4}" font-size="9" fill="${BC.text2}">${esc(label)}</text>`;
   });

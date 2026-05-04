@@ -258,59 +258,64 @@ async function runAnalysis() {
   columnMapping = readMapping();
   const engine = window.BugAnalysisEngine;
 
-  showLoading('バグレコードをマッピング中…');
-  await yield_();
+  try {
+    showLoading('バグレコードをマッピング中…');
+    await yield_();
 
-  bugs = engine.mapBugRecords(rawData.rows, columnMapping);
-  if (bugs.length === 0) {
+    bugs = engine.mapBugRecords(rawData.rows, columnMapping);
+    if (bugs.length === 0) {
+      showError('有効なバグレコードが見つかりませんでした。列マッピングを確認してください。');
+      return;
+    }
+
+    showLoading(`${bugs.length}件のバグを分析中…`);
+    await yield_();
+
+    const timeSeries = engine.buildTimeSeries(bugs, 7);
+
+    showLoading('信頼性成長曲線をフィッティング中…');
+    await yield_();
+    const gompertz = timeSeries ? engine.fitGompertz(timeSeries.series) : null;
+    await yield_();
+    const logistic = timeSeries ? engine.fitLogistic(timeSeries.series) : null;
+
+    showLoading('パレート・DRE・工程分析中…');
+    await yield_();
+
+    analysisResult = {
+      bugs,
+      total: bugs.length,
+      timeSeries,
+      gompertz,
+      logistic,
+      pareto: {
+        cause:      engine.calcPareto(bugs, 'cause'),
+        module:     engine.calcPareto(bugs, 'module'),
+        assignee:   engine.calcPareto(bugs, 'assignee'),
+        severity:   engine.calcPareto(bugs, 'severity'),
+        foundPhase: engine.calcPareto(bugs, 'foundPhase'),
+      },
+      dre:         engine.calcDRE(bugs),
+      fixDuration: engine.calcFixDuration(bugs),
+      regression:  engine.calcRegressionRate(bugs),
+      zone:        engine.calcZoneAnalysis(bugs, effortMap),
+      odc:         engine.calcODC(bugs),
+    };
+
+    showLoading('ダッシュボードを描画中…');
+    await yield_();
+
+    renderedTabs.clear();
+    buildTabRenderers();
+    showResults();
+    renderTab('dashboard');
+    switchToTab('dashboard');
+  } catch (err) {
+    console.error('分析エラー:', err);
+    showError('分析中にエラーが発生しました: ' + err.message);
+  } finally {
     hideLoading();
-    showError('有効なバグレコードが見つかりませんでした。列マッピングを確認してください。');
-    return;
   }
-
-  showLoading(`${bugs.length}件のバグを分析中…`);
-  await yield_();
-
-  const timeSeries = engine.buildTimeSeries(bugs, 7);
-
-  showLoading('信頼性成長曲線をフィッティング中…');
-  await yield_();
-  const gompertz = timeSeries ? engine.fitGompertz(timeSeries.series) : null;
-  await yield_();
-  const logistic = timeSeries ? engine.fitLogistic(timeSeries.series) : null;
-
-  showLoading('パレート・DRE・工程分析中…');
-  await yield_();
-
-  analysisResult = {
-    bugs,
-    total: bugs.length,
-    timeSeries,
-    gompertz,
-    logistic,
-    pareto: {
-      cause:      engine.calcPareto(bugs, 'cause'),
-      module:     engine.calcPareto(bugs, 'module'),
-      assignee:   engine.calcPareto(bugs, 'assignee'),
-      severity:   engine.calcPareto(bugs, 'severity'),
-      foundPhase: engine.calcPareto(bugs, 'foundPhase'),
-    },
-    dre:         engine.calcDRE(bugs),
-    fixDuration: engine.calcFixDuration(bugs),
-    regression:  engine.calcRegressionRate(bugs),
-    zone:        engine.calcZoneAnalysis(bugs, effortMap),
-    odc:         engine.calcODC(bugs),
-  };
-
-  showLoading('ダッシュボードを描画中…');
-  await yield_();
-
-  renderedTabs.clear();
-  buildTabRenderers();
-  showResults();
-  renderTab('dashboard');
-  switchToTab('dashboard');
-  hideLoading();
 }
 
 // ========== タブ管理 ==========
@@ -448,7 +453,7 @@ function renderDashboard() {
     BC.renderLineChart(
       document.getElementById('dashGrowthChart'),
       r.timeSeries.series,
-      { gompertz: r.gompertz, logistic: r.logistic },
+      [r.gompertz, r.logistic].filter(Boolean),
       '',
       { compact: true }
     );
@@ -516,7 +521,7 @@ function renderGrowthTab() {
   window.BugCharts.renderLineChart(
     document.getElementById('growthMainChart'),
     r.timeSeries.series,
-    { gompertz: r.gompertz, logistic: r.logistic },
+    [r.gompertz, r.logistic].filter(Boolean),
     '累積バグ数と信頼性成長曲線'
   );
 }
