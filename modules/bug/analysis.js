@@ -147,29 +147,41 @@ function extendPredictions(series, predictFn, params) {
 
 // ========== ゴンペルツ ==========
 
+// f の探索範囲: 粗め(1.05〜3.0)で高速探索し、見つからなければ広域(3.0〜10.0)で再探索
+const GOMPERTZ_F_RANGES = [
+  { from: 1.05, to: 3.0,  step: 0.05 },
+  { from: 3.0,  to: 10.0, step: 0.2  },
+];
+
 function fitGompertz(series) {
   const obs = series.map(s => s.cumulative);
   const maxObs = Math.max(...obs);
   if (maxObs === 0) return null;
   let best = null, bestMSE = Infinity;
-  for (let f = 1.05; f <= 3.0; f += 0.05) {
-    const a = maxObs * f;
-    const pts = [];
-    for (let i = 0; i < obs.length; i++) {
-      const y = obs[i];
-      if (y <= 0 || y >= a) continue;
-      const inner = -Math.log(y / a);
-      if (inner <= 0) continue;
-      pts.push({ x: i, y: Math.log(inner) });
+
+  for (const range of GOMPERTZ_F_RANGES) {
+    for (let f = range.from; f <= range.to + 1e-9; f += range.step) {
+      const a = maxObs * f;
+      const pts = [];
+      for (let i = 0; i < obs.length; i++) {
+        const y = obs[i];
+        if (y <= 0 || y >= a) continue;
+        const inner = -Math.log(y / a);
+        if (inner <= 0) continue;
+        pts.push({ x: i, y: Math.log(inner) });
+      }
+      if (pts.length < 3) continue;
+      const { slope, intercept } = linReg(pts.map(p => p.x), pts.map(p => p.y));
+      const b = Math.exp(intercept), c = -slope;
+      if (b <= 0 || c <= 0) continue;
+      const pred = obs.map((_, i) => a * Math.exp(-b * Math.exp(-c * i)));
+      const mse = pred.reduce((s, p, i) => s + (p - obs[i]) ** 2, 0) / obs.length;
+      if (mse < bestMSE) { bestMSE = mse; best = { a, b, c }; }
     }
-    if (pts.length < 3) continue;
-    const { slope, intercept } = linReg(pts.map(p => p.x), pts.map(p => p.y));
-    const b = Math.exp(intercept), c = -slope;
-    if (b <= 0 || c <= 0) continue;
-    const pred = obs.map((_, i) => a * Math.exp(-b * Math.exp(-c * i)));
-    const mse = pred.reduce((s, p, i) => s + (p - obs[i]) ** 2, 0) / obs.length;
-    if (mse < bestMSE) { bestMSE = mse; best = { a, b, c }; }
+    // 粗め探索で見つかればそこで終了（過剰な収束予測を避ける）
+    if (best) break;
   }
+
   if (!best) return null;
   const { a, b, c } = best;
   const fn = ({ a, b, c }, t) => a * Math.exp(-b * Math.exp(-c * t));
@@ -179,27 +191,38 @@ function fitGompertz(series) {
 
 // ========== ロジスティック ==========
 
+// f の探索範囲: ゴンペルツと同様の2段階探索
+const LOGISTIC_F_RANGES = [
+  { from: 1.05, to: 3.0,  step: 0.05 },
+  { from: 3.0,  to: 10.0, step: 0.2  },
+];
+
 function fitLogistic(series) {
   const obs = series.map(s => s.cumulative);
   const maxObs = Math.max(...obs);
   if (maxObs === 0) return null;
   let best = null, bestMSE = Infinity;
-  for (let f = 1.05; f <= 3.0; f += 0.05) {
-    const a = maxObs * f;
-    const pts = [];
-    for (let i = 0; i < obs.length; i++) {
-      const y = obs[i];
-      if (y <= 0 || y >= a) continue;
-      pts.push({ x: i, y: Math.log(y / (a - y)) });
+
+  for (const range of LOGISTIC_F_RANGES) {
+    for (let f = range.from; f <= range.to + 1e-9; f += range.step) {
+      const a = maxObs * f;
+      const pts = [];
+      for (let i = 0; i < obs.length; i++) {
+        const y = obs[i];
+        if (y <= 0 || y >= a) continue;
+        pts.push({ x: i, y: Math.log(y / (a - y)) });
+      }
+      if (pts.length < 3) continue;
+      const { slope, intercept } = linReg(pts.map(p => p.x), pts.map(p => p.y));
+      const b = slope, c = slope !== 0 ? -intercept / slope : 0;
+      if (b <= 0) continue;
+      const pred = obs.map((_, i) => a / (1 + Math.exp(-b * (i - c))));
+      const mse = pred.reduce((s, p, i) => s + (p - obs[i]) ** 2, 0) / obs.length;
+      if (mse < bestMSE) { bestMSE = mse; best = { a, b, c }; }
     }
-    if (pts.length < 3) continue;
-    const { slope, intercept } = linReg(pts.map(p => p.x), pts.map(p => p.y));
-    const b = slope, c = slope !== 0 ? -intercept / slope : 0;
-    if (b <= 0) continue;
-    const pred = obs.map((_, i) => a / (1 + Math.exp(-b * (i - c))));
-    const mse = pred.reduce((s, p, i) => s + (p - obs[i]) ** 2, 0) / obs.length;
-    if (mse < bestMSE) { bestMSE = mse; best = { a, b, c }; }
+    if (best) break;
   }
+
   if (!best) return null;
   const { a, b, c } = best;
   const fn = ({ a, b, c }, t) => a / (1 + Math.exp(-b * (t - c)));

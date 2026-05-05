@@ -602,6 +602,7 @@ function drawGrowthChart() {
   // モデルフィッティング
   const gompertz = engine.fitGompertz(ts.series);
   const logistic  = engine.fitLogistic(ts.series);
+  const validModels = [gompertz, logistic].filter(Boolean);
 
   // 選択中ラベルをタイトルに反映
   let chartTitle = '累積バグ数と信頼性成長曲線';
@@ -610,15 +611,26 @@ function drawGrowthChart() {
     chartTitle += `（${labels}）`;
   }
 
+  // フィット失敗時も実績線は描画し、注釈メッセージを付与
   BC.renderLineChart(
     document.getElementById('growthMainChart'),
     ts.series,
-    [gompertz, logistic].filter(Boolean),
+    validModels,
     chartTitle
   );
 
-  // モデル情報カード更新
+  // モデル情報カード更新（フィット失敗時はその旨を表示）
+  const fitFailMsg = validModels.length === 0
+    ? `<div class="info-card" style="color:var(--warn);">
+        ⚠ モデルフィット失敗<br>
+        <span style="font-size:12px;color:var(--text2);">
+          選択した重大度のバグ累積がS字曲線を形成していないため、<br>
+          ゴンペルツ・ロジスティック曲線ともにフィットできませんでした。<br>
+          より多くの重大度を選択するか、全件で確認してください。
+        </span>
+      </div>` : '';
   document.getElementById('growthInfoCards').innerHTML = `
+    ${fitFailMsg}
     ${gompertz ? `<div class="info-card"><b>ゴンペルツ曲線</b><br>総バグ予測: ${Math.round(gompertz.total)}件<br>95%収束: 第${gompertz.t95 ?? '—'}週<br>MSE: ${Math.round(gompertz.mse)}</div>` : ''}
     ${logistic  ? `<div class="info-card"><b>ロジスティック曲線</b><br>総バグ予測: ${Math.round(logistic.total)}件<br>95%収束: 第${logistic.t95 ?? '—'}週<br>MSE: ${Math.round(logistic.mse)}</div>` : ''}`;
 }
