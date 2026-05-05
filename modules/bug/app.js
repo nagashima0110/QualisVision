@@ -293,7 +293,9 @@ async function runAnalysis() {
         module:     engine.calcPareto(bugs, 'module'),
         assignee:   engine.calcPareto(bugs, 'assignee'),
         severity:   engine.calcPareto(bugs, 'severity'),
+        priority:   engine.calcPareto(bugs, 'priority'),
         foundPhase: engine.calcPareto(bugs, 'foundPhase'),
+        status:     engine.calcPareto(bugs, 'status'),
       },
       dre:         engine.calcDRE(bugs),
       fixDuration: engine.calcFixDuration(bugs),
@@ -392,23 +394,29 @@ function renderDashboard() {
   const el = document.getElementById('tab-dashboard');
 
   const withDate = r.bugs.filter(b => b._foundDate).length;
-  const withFixed = r.bugs.filter(b => b._fixedDate).length;
-  const openCount = r.bugs.filter(b => {
-    const s = (b.status || '').toLowerCase();
-    return !['closed','fixed','done','完了','修正済','クローズ'].includes(s);
-  }).length;
+
+  // クローズ判定: 正規表現で幅広く対応（Jira・Redmine・独自Excel の各種表現）
+  const CLOSED_RE = /closed|fixed|done|resolved|rejected|wontfix|won.?t.?fix|invalid|duplicate|完了|修正済|クローズ|解決|済み|却下|無効|終了|検証済|対応済/i;
+  const statusPareto = r.pareto.status;
+  let closedCount = 0, openCount = null;
+  if (statusPareto) {
+    closedCount = statusPareto.items
+      .filter(item => CLOSED_RE.test(item.label))
+      .reduce((s, item) => s + item.count, 0);
+    openCount = r.total - closedCount;
+  }
 
   const bestModel = r.gompertz && r.logistic
     ? (r.gompertz.mse <= r.logistic.mse ? r.gompertz : r.logistic)
     : (r.gompertz || r.logistic);
 
   const kpiItems = [
-    { label: '総バグ数', value: r.total, sub: `${withDate}件日付あり` },
-    { label: 'オープン', value: openCount, sub: `${r.total - openCount}件クローズ` },
-    { label: '再発率', value: r.regression ? r.regression.rate + '%' : '—', sub: `${r.regression?.regs || 0}件` },
+    { label: '総バグ数',     value: r.total,      sub: `${withDate}件日付あり` },
+    { label: 'オープン',     value: openCount ?? '—', sub: openCount != null ? `${closedCount}件クローズ` : 'ステータス列未設定' },
+    { label: '再発率',       value: r.regression ? r.regression.rate + '%' : '—', sub: `${r.regression?.regs || 0}件` },
     { label: '修正平均日数', value: r.fixDuration ? r.fixDuration.avg + '日' : '—', sub: r.fixDuration ? `中央値 ${r.fixDuration.median}日` : '' },
-    { label: '予測総バグ数', value: bestModel ? Math.round(bestModel.total) + '件' : '—', sub: bestModel ? `モデル: ${bestModel.type === 'gompertz' ? 'ゴンペルツ' : 'ロジスティック'}` : '' },
-    { label: '95%収束予測', value: bestModel?.t95 != null ? `第${bestModel.t95}週` : '—', sub: '' },
+    { label: '予測総バグ数', value: bestModel ? Math.round(bestModel.total) + '件' : '—', sub: bestModel ? `${bestModel.type === 'gompertz' ? 'ゴンペルツ' : 'ロジスティック'}モデル` : '' },
+    { label: '95%収束予測',  value: bestModel?.t95 != null ? `第${bestModel.t95}週` : '—', sub: '' },
   ];
 
   let html = `<div class="kpi-grid">${kpiItems.map(k => `
@@ -444,6 +452,11 @@ function renderDashboard() {
     html += `<div class="dash-chart-card"><div class="dash-chart-title">発見工程分布</div><div id="dashPhaseChart"></div></div>`;
   }
 
+  // ステータス分布ミニ
+  if (statusPareto) {
+    html += `<div class="dash-chart-card"><div class="dash-chart-title">ステータス分布</div><div id="dashStatusChart"></div></div>`;
+  }
+
   html += `</div>`;
   el.innerHTML = html;
 
@@ -468,6 +481,10 @@ function renderDashboard() {
     BC.renderBarChart(document.getElementById('dashPhaseChart'),
       phaseP.items.map(i => ({ label: i.label, value: i.count })), '', { compact: true });
   }
+  if (statusPareto) {
+    BC.renderBarChart(document.getElementById('dashStatusChart'),
+      statusPareto.items.map(i => ({ label: i.label, value: i.count })), '', { compact: true });
+  }
 }
 
 // ========== パレート図タブ ==========
@@ -477,20 +494,23 @@ function renderParetoTab() {
   const BC = window.BugCharts;
   const el = document.getElementById('tab-pareto');
   const defs = [
+    { key: 'status',     title: 'ステータス' },
     { key: 'cause',      title: '原因分類' },
     { key: 'module',     title: 'モジュール/機能' },
-    { key: 'assignee',   title: '担当者' },
     { key: 'severity',   title: '重大度' },
+    { key: 'priority',   title: '優先度' },
+    { key: 'assignee',   title: '担当者' },
     { key: 'foundPhase', title: '発見工程' },
   ];
-  el.innerHTML = '<div class="charts-grid"></div>';
-  const grid = el.querySelector('.charts-grid');
+  // パレート図は1列表示で大きく見せる
+  el.innerHTML = '<div class="charts-single"></div>';
+  const grid = el.querySelector('.charts-single');
   let anyChart = false;
   for (const d of defs) {
     const data = r.pareto[d.key];
     if (!data) continue;
     const card = document.createElement('div');
-    card.className = 'chart-card';
+    card.className = 'chart-card full-width';
     card.innerHTML = `<div class="chart-card-title">${d.title}</div><div class="chart-area"></div>`;
     grid.appendChild(card);
     BC.renderParetoChart(card.querySelector('.chart-area'), data, d.title);
