@@ -276,31 +276,67 @@ function calcRegressionRate(bugs) {
   };
 }
 
-// ========== ゾーン分析 ==========
+// ========== ゾーン分析（9ゾーン: テスト数 × バグ数） ==========
+//
+// ゾーン配置（バグ多い=上、テスト多い=右）:
+//   バグ多 | 8  5  6
+//   バグ中 | 7  1  4
+//   バグ少 | 9  3  2
+//          テスト: 少 中 多
+//
+// 閾値: 33パーセンタイル / 67パーセンタイル
 
-function calcZoneAnalysis(bugs, effortMap) {
+const ZONE_MAP = [
+  [9, 3, 2],  // バグ少（Low）: テスト少→9, 中→3, 多→2
+  [7, 1, 4],  // バグ中（Med）: テスト少→7, 中→1, 多→4
+  [8, 5, 6],  // バグ多（High）: テスト少→8, 中→5, 多→6
+];
+
+const ZONE_INFO = {
+  1: { label: '期待通り',             color: '#4fffb0', desc: 'テスト数に対して期待通りのバグが発見できている' },
+  2: { label: 'バグ少（品質良好）',    color: '#4fafff', desc: 'テスト数に対してバグの数が少ない' },
+  3: { label: 'テスト効率が良い',      color: '#7b6cff', desc: 'テスト数は少ないがバグを発見できている（テスト内容を見直す）' },
+  4: { label: 'テスト効率が悪い',      color: '#ffd93d', desc: 'テスト数に対してバグの発見が少ない' },
+  5: { label: 'バグ多（品質問題）',    color: '#ff9800', desc: 'テスト数に対してバグの発見が多い（品質確保できていない）' },
+  6: { label: 'バグ多・テスト多（深刻）', color: '#ff6b6b', desc: 'テストすればするほどバグが見つかる状態（品質確保できていない）' },
+  7: { label: 'テスト不足・バグ中',    color: '#ff9800', desc: 'テストが少ないがバグがある程度出ている（テスト不足・品質問題）' },
+  8: { label: 'テスト不足・バグ多（最悪）', color: '#ff3b3b', desc: 'テストが少なくバグが多い（テスト不足・品質問題が深刻）' },
+  9: { label: 'テストが少ない',        color: '#4a5272', desc: 'テスト数が少なく判断できない（テスト不足）' },
+};
+
+function pct(sorted, ratio) {
+  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * ratio))];
+}
+
+function calcZoneAnalysis(bugs, testCountMap) {
   const bugsByMod = {};
   for (const b of bugs) {
     const m = b.module || '（未分類）';
     bugsByMod[m] = (bugsByMod[m] || 0) + 1;
   }
-  const allMods = new Set([...Object.keys(bugsByMod), ...Object.keys(effortMap)]);
+  const allMods = new Set([...Object.keys(bugsByMod), ...Object.keys(testCountMap)]);
   const points = [...allMods].map(m => ({
-    module: m, bugs: bugsByMod[m] || 0, effort: parseFloat(effortMap[m]) || 0,
-  })).filter(p => p.bugs > 0 || p.effort > 0);
-  if (points.length < 2) return { points, medBugs: 0, medEffort: 0 };
+    module: m,
+    bugs:  bugsByMod[m] || 0,
+    tests: parseFloat(testCountMap[m]) || 0,
+  })).filter(p => p.bugs > 0 || p.tests > 0);
+
+  if (points.length < 3) return { points, thresholds: null };
+
+  // 33・67パーセンタイルで3分割
   const sb = [...points.map(p => p.bugs)].sort((a, b) => a - b);
-  const se = [...points.map(p => p.effort)].sort((a, b) => a - b);
-  const medBugs   = sb[Math.floor(sb.length / 2)];
-  const medEffort = se[Math.floor(se.length / 2)];
+  const st = [...points.map(p => p.tests)].sort((a, b) => a - b);
+  const b33 = pct(sb, 0.33), b67 = pct(sb, 0.67);
+  const t33 = pct(st, 0.33), t67 = pct(st, 0.67);
+
   return {
-    points: points.map(p => ({
-      ...p,
-      zone: p.bugs >= medBugs
-        ? (p.effort >= medEffort ? 'Q1' : 'Q2')
-        : (p.effort >= medEffort ? 'Q3' : 'Q4'),
-    })),
-    medBugs, medEffort,
+    points: points.map(p => {
+      const tl = p.tests <= t33 ? 0 : p.tests <= t67 ? 1 : 2;
+      const bl = p.bugs  <= b33 ? 0 : p.bugs  <= b67 ? 1 : 2;
+      const zoneNum = ZONE_MAP[bl][tl];
+      return { ...p, zone: zoneNum, testLevel: tl, bugLevel: bl };
+    }),
+    thresholds: { b33, b67, t33, t67 },
   };
 }
 
@@ -330,5 +366,5 @@ window.BugAnalysisEngine = {
   parseBugExcel, mapBugRecords, calcPareto,
   buildTimeSeries, fitGompertz, fitLogistic,
   calcDRE, calcFixDuration, calcRegressionRate,
-  calcZoneAnalysis, calcODC, BUG_PHASES_DEFAULT,
+  calcZoneAnalysis, calcODC, BUG_PHASES_DEFAULT, ZONE_INFO,
 };

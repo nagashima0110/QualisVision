@@ -41,7 +41,7 @@ let rawData = null;
 let bugs = [];
 let fileHeaders = [];
 let columnMapping = {};
-let effortMap = {};
+let testCountMap = {}; // モジュール別テスト数（ユーザー手入力）
 let analysisResult = null;
 let renderedTabs = new Set();
 let tabRenderers = {};
@@ -300,7 +300,7 @@ async function runAnalysis() {
       dre:         engine.calcDRE(bugs),
       fixDuration: engine.calcFixDuration(bugs),
       regression:  engine.calcRegressionRate(bugs),
-      zone:        engine.calcZoneAnalysis(bugs, effortMap),
+      zone:        engine.calcZoneAnalysis(bugs, testCountMap),
       odc:         engine.calcODC(bugs),
     };
 
@@ -652,6 +652,19 @@ function renderRegressionTab() {
 
 // ========== ゾーン分析タブ ==========
 
+// ゾーン説明テキスト（ローカル参照用）
+const ZONE_INFO_LOCAL = {
+  1: '期待通り（テスト数・バグ数ともに中程度で安定）',
+  2: 'バグ少（テスト数多いがバグが少ない／テスト効率に問題なし）',
+  3: 'テスト効率良（テスト少ないがバグを発見できている）',
+  4: 'テスト効率悪（テスト多いがバグが少ない／リソース過剰）',
+  5: '品質問題（テスト数に対してバグが多い）',
+  6: '品質深刻（テスト多・バグも多い／最優先改善）',
+  7: 'テスト不足・バグ中（品質懸念あり）',
+  8: 'テスト不足・バグ多（深刻な品質問題）',
+  9: 'テスト少（情報不足／評価困難）',
+};
+
 function renderZoneTab() {
   const r = analysisResult;
   const el = document.getElementById('tab-zone');
@@ -659,30 +672,38 @@ function renderZoneTab() {
   // モジュール一覧収集
   const modules = [...new Set(r.bugs.map(b => b.module).filter(Boolean))].sort();
 
+  // 9ゾーン凡例HTML生成
+  const ZONE_COLORS = {
+    1:'#4fffb0', 2:'#4fafff', 3:'#7b6cff',
+    4:'#a0c4ff', 5:'#ffd93d', 6:'#ff6b6b',
+    7:'#ffb347', 8:'#ff4500', 9:'#8b949e',
+  };
+  const legendItems = Object.entries(ZONE_INFO_LOCAL).map(([z, desc]) =>
+    `<div class="zone-legend-item">
+      <span class="zone-num-badge" style="background:${ZONE_COLORS[z]}22;color:${ZONE_COLORS[z]};border:1px solid ${ZONE_COLORS[z]}66;">${z}</span>
+      <span>${desc}</span>
+    </div>`
+  ).join('');
+
   el.innerHTML = `
     <div class="zone-layout">
       <div class="zone-left">
-        <div class="chart-card full-width"><div class="chart-card-title">ゾーン散布図</div><div class="chart-area" id="zoneScatterChart"></div></div>
-        <div class="zone-legend">
-          <div class="zone-legend-item"><span class="zone-badge q1">Q1</span> 高バグ・高工数（要改善）</div>
-          <div class="zone-legend-item"><span class="zone-badge q2">Q2</span> 高バグ・低工数（危険）</div>
-          <div class="zone-legend-item"><span class="zone-badge q3">Q3</span> 低バグ・高工数（過剰テスト）</div>
-          <div class="zone-legend-item"><span class="zone-badge q4">Q4</span> 低バグ・低工数（良好）</div>
-        </div>
+        <div class="chart-card full-width"><div class="chart-card-title">ゾーン散布図（テスト数 × バグ数 9ゾーン）</div><div class="chart-area" id="zoneScatterChart"></div></div>
+        <div class="zone-legend">${legendItems}</div>
       </div>
       <div class="zone-right">
-        <div class="zone-effort-title">モジュール別テスト工数入力</div>
+        <div class="zone-effort-title">モジュール別テスト数入力</div>
         <div class="zone-effort-table">
           <table class="data-table">
-            <thead><tr><th>モジュール</th><th>バグ数</th><th>工数（人時）</th></tr></thead>
-            <tbody id="effortTableBody"></tbody>
+            <thead><tr><th>モジュール</th><th>バグ数</th><th>テスト数</th></tr></thead>
+            <tbody id="testCountTableBody"></tbody>
           </table>
         </div>
         <button class="btn btn-secondary" onclick="recalcZone()">散布図を更新</button>
       </div>
     </div>`;
 
-  const tbody = document.getElementById('effortTableBody');
+  const tbody = document.getElementById('testCountTableBody');
   const bugByMod = {};
   for (const b of r.bugs) { const m = b.module || '（未分類）'; bugByMod[m] = (bugByMod[m] || 0) + 1; }
   const allMods = modules.length > 0 ? modules : Object.keys(bugByMod);
@@ -690,8 +711,9 @@ function renderZoneTab() {
 
   for (const mod of allMods) {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${mod}</td><td>${bugByMod[mod] || 0}</td>
-      <td><input type="number" class="effort-input" data-module="${mod}" value="${effortMap[mod] || ''}" min="0" step="0.5" placeholder="—"></td>`;
+    const safemod = String(mod).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    tr.innerHTML = `<td>${safemod}</td><td>${bugByMod[mod] || 0}</td>
+      <td><input type="number" class="effort-input" data-module="${safemod}" value="${testCountMap[mod] || ''}" min="0" step="1" placeholder="—"></td>`;
     tbody.appendChild(tr);
   }
 
@@ -699,11 +721,12 @@ function renderZoneTab() {
 }
 
 function recalcZone() {
+  // 入力値をtestCountMapに反映
   document.querySelectorAll('.effort-input').forEach(inp => {
-    if (inp.value) effortMap[inp.dataset.module] = parseFloat(inp.value);
-    else delete effortMap[inp.dataset.module];
+    if (inp.value) testCountMap[inp.dataset.module] = parseFloat(inp.value);
+    else delete testCountMap[inp.dataset.module];
   });
-  analysisResult.zone = window.BugAnalysisEngine.calcZoneAnalysis(bugs, effortMap);
+  analysisResult.zone = window.BugAnalysisEngine.calcZoneAnalysis(bugs, testCountMap);
   drawZoneScatter();
 }
 

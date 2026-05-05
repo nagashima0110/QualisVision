@@ -241,63 +241,100 @@ function renderDREChart(container, dreData) {
 }
 
 // =============================================
-// ゾーン分析 散布図
+// ゾーン分析 9ゾーン散布図（テスト数 × バグ数）
 // =============================================
 function renderZoneScatter(container, zd) {
-  if (!zd || zd.points.length < 2) { noData(container, 'データ不足（2機能以上の工数データが必要）'); return; }
-  const { points, medBugs, medEffort } = zd;
-  const W = 780, H = 540, ml = 72, mr = 24, mt = 44, mb = 72;
+  if (!zd || !zd.thresholds || zd.points.length < 3) {
+    noData(container, 'データ不足（モジュール別テスト数を3件以上入力してください）');
+    return;
+  }
+  const { points, thresholds } = zd;
+  const { b33, b67, t33, t67 } = thresholds;
+
+  // ゾーン番号→色のマッピング
+  const ZONE_COLORS = {
+    1: '#4fffb0', 2: '#4fafff', 3: '#7b6cff',
+    4: '#ffd93d', 5: '#ff9800', 6: '#ff6b6b',
+    7: '#ff9800', 8: '#ff3b3b', 9: '#4a5272',
+  };
+
+  const W = 840, H = 580, ml = 80, mr = 24, mt = 50, mb = 80;
   const pw = W - ml - mr, ph = H - mt - mb;
-  const maxB = Math.max(...points.map(p => p.bugs), 1);
-  const maxE = Math.max(...points.map(p => p.effort), 1);
-  const xS = scl(0, maxE * 1.15, ml, ml + pw);
-  const yS = scl(0, maxB * 1.15, mt + ph, mt);
-  const xM = xS(medEffort).toFixed(1), yM = yS(medBugs).toFixed(1);
+  const maxB = Math.max(...points.map(p => p.bugs), b67 * 1.2, 1);
+  const maxT = Math.max(...points.map(p => p.tests), t67 * 1.2, 1);
+  const xS = scl(0, maxT * 1.1, ml, ml + pw);
+  const yS = scl(0, maxB * 1.1, mt + ph, mt);
 
-  const ZC = { Q1: BC.accent3, Q2: BC.orange, Q3: BC.accent4, Q4: BC.accent };
-  const ZL = [
-    { z: 'Q1', x: parseFloat(xM) + (ml + pw - parseFloat(xM)) / 2, y: mt + ph * 0.16, t: '⚠ 高工数・多バグ', s: '非効率' },
-    { z: 'Q2', x: ml + (parseFloat(xM) - ml) / 2,                  y: mt + ph * 0.16, t: '🔥 低工数・多バグ', s: 'リスク大' },
-    { z: 'Q3', x: parseFloat(xM) + (ml + pw - parseFloat(xM)) / 2, y: mt + ph * 0.86, t: '📌 高工数・少バグ', s: '過剰?' },
-    { z: 'Q4', x: ml + (parseFloat(xM) - ml) / 2,                  y: mt + ph * 0.86, t: '✅ 低工数・少バグ', s: '良好' },
-  ];
+  // 閾値線の座標
+  const xt33 = xS(t33).toFixed(1), xt67 = xS(t67).toFixed(1);
+  const yb33 = yS(b33).toFixed(1), yb67 = yS(b67).toFixed(1);
 
-  const quads = `
-    <rect x="${ml}" y="${mt}" width="${parseFloat(xM) - ml}" height="${parseFloat(yM) - mt}" fill="${BC.accent3}" opacity="0.05"/>
-    <rect x="${xM}" y="${mt}" width="${ml + pw - parseFloat(xM)}" height="${parseFloat(yM) - mt}" fill="${BC.accent3}" opacity="0.04"/>
-    <rect x="${ml}" y="${yM}" width="${parseFloat(xM) - ml}" height="${mt + ph - parseFloat(yM)}" fill="${BC.accent}" opacity="0.04"/>
-    <rect x="${xM}" y="${yM}" width="${ml + pw - parseFloat(xM)}" height="${mt + ph - parseFloat(yM)}" fill="${BC.accent}" opacity="0.06"/>
-    <line x1="${xM}" y1="${mt}" x2="${xM}" y2="${mt + ph}" stroke="${BC.text2}" stroke-width="1.2" stroke-dasharray="5,4"/>
-    <line x1="${ml}" y1="${yM}" x2="${ml + pw}" y2="${yM}" stroke="${BC.text2}" stroke-width="1.2" stroke-dasharray="5,4"/>`;
+  // 9ゾーンの背景矩形（左から: 少/中/多, 下から: 少/中/多）
+  // X帯
+  const x0 = ml, x1 = parseFloat(xt33), x2 = parseFloat(xt67), x3 = ml + pw;
+  // Y帯（SVGは上が小さい値なので逆順）
+  const y0 = mt, y1 = parseFloat(yb67), y2 = parseFloat(yb33), y3 = mt + ph;
 
+  // ZONE_MAP[bugLevel][testLevel] → zone number
+  // bugLevel: 0=少, 1=中, 2=多  testLevel: 0=少, 1=中, 2=多
+  const ZM = [[9,3,2],[7,1,4],[8,5,6]];
+  const bgOpacity = 0.08;
+  let zoneBg = '', zoneLabels = '';
+
+  const xBands = [[x0, x1], [x1, x2], [x2, x3]];
+  const yBands = [[y1, y0], [y2, y1], [y3, y2]]; // SVG: 上=バグ多, 下=バグ少
+
+  for (let bl = 2; bl >= 0; bl--) {        // バグ: 多→少
+    for (let tl = 0; tl < 3; tl++) {       // テスト: 少→多
+      const zn = ZM[bl][tl];
+      const [xa, xb] = xBands[tl];
+      const [ya, yb] = yBands[bl];          // ya=上端, yb=下端
+      const col = ZONE_COLORS[zn];
+      const cx = (xa + xb) / 2, cy = (ya + yb) / 2;
+      zoneBg += `<rect x="${xa}" y="${ya}" width="${xb - xa}" height="${yb - ya}" fill="${col}" opacity="${bgOpacity}" rx="2"/>`;
+      zoneLabels += `<text x="${cx}" y="${cy - 8}" text-anchor="middle" font-size="18" font-weight="800" fill="${col}" opacity="0.4">${zn}</text>`;
+    }
+  }
+
+  // 閾値の仕切り線
+  const dividers = `
+    <line x1="${xt33}" y1="${mt}" x2="${xt33}" y2="${mt + ph}" stroke="${BC.text2}" stroke-width="1" stroke-dasharray="5,4" opacity="0.5"/>
+    <line x1="${xt67}" y1="${mt}" x2="${xt67}" y2="${mt + ph}" stroke="${BC.text2}" stroke-width="1" stroke-dasharray="5,4" opacity="0.5"/>
+    <line x1="${ml}" y1="${yb33}" x2="${ml + pw}" y2="${yb33}" stroke="${BC.text2}" stroke-width="1" stroke-dasharray="5,4" opacity="0.5"/>
+    <line x1="${ml}" y1="${yb67}" x2="${ml + pw}" y2="${yb67}" stroke="${BC.text2}" stroke-width="1" stroke-dasharray="5,4" opacity="0.5"/>
+    <text x="${parseFloat(xt33) - 4}" y="${mt + ph + 20}" text-anchor="middle" font-size="9" fill="${BC.text2}" opacity="0.6">33%</text>
+    <text x="${parseFloat(xt67) - 4}" y="${mt + ph + 20}" text-anchor="middle" font-size="9" fill="${BC.text2}" opacity="0.6">67%</text>
+    <text x="${ml - 8}" y="${parseFloat(yb33)}" text-anchor="end" font-size="9" fill="${BC.text2}" opacity="0.6" dominant-baseline="middle">33%</text>
+    <text x="${ml - 8}" y="${parseFloat(yb67)}" text-anchor="end" font-size="9" fill="${BC.text2}" opacity="0.6" dominant-baseline="middle">67%</text>`;
+
+  // データ点
   const dots = points.map(p => {
-    const cx = xS(p.effort).toFixed(1), cy = yS(p.bugs).toFixed(1);
-    const lbl = p.module.length > 12 ? p.module.slice(0, 12) + '…' : p.module;
-    return `<circle cx="${cx}" cy="${cy}" r="8" fill="${ZC[p.zone]}" opacity="0.85"/>
-      <text x="${cx}" y="${(parseFloat(cy) - 12).toFixed(1)}" text-anchor="middle" font-size="10" fill="${BC.text2}">${esc(lbl)}</text>`;
+    const cx = xS(p.tests).toFixed(1), cy = yS(p.bugs).toFixed(1);
+    const col = ZONE_COLORS[p.zone];
+    const lbl = p.module.length > 10 ? p.module.slice(0, 10) + '…' : p.module;
+    return `<circle cx="${cx}" cy="${cy}" r="9" fill="${col}" stroke="${BC.bg}" stroke-width="1.5" opacity="0.9"/>
+      <text x="${cx}" y="${(parseFloat(cy) + 3).toFixed(1)}" text-anchor="middle" font-size="9" font-weight="700" fill="${BC.bg}">${p.zone}</text>
+      <text x="${cx}" y="${(parseFloat(cy) - 13).toFixed(1)}" text-anchor="middle" font-size="10" fill="${BC.text2}">${esc(lbl)}</text>`;
   }).join('');
 
-  const zLabels = ZL.map(z => `
-    <text x="${z.x}" y="${z.y}" text-anchor="middle" font-size="12" font-weight="700" fill="${ZC[z.z]}" opacity="0.7">${esc(z.t)}</text>
-    <text x="${z.x}" y="${z.y + 17}" text-anchor="middle" font-size="11" fill="${BC.text2}" opacity="0.5">(${z.s})</text>`).join('');
-
+  // 軸目盛り
   let xt = '', yt = '';
   for (let i = 0; i <= 5; i++) {
-    const v = maxE * 1.15 * i / 5, x = xS(v).toFixed(1);
-    xt += `<text x="${x}" y="${mt + ph + 20}" text-anchor="middle" font-size="11" fill="${BC.text2}">${Math.round(v)}h</text>
-      <line x1="${x}" y1="${mt}" x2="${x}" y2="${mt + ph}" stroke="${BC.border}" stroke-width="0.6"/>`;
-    const bv = maxB * 1.15 * i / 5, y = yS(bv).toFixed(1);
+    const v = maxT * 1.1 * i / 5, x = xS(v).toFixed(1);
+    xt += `<text x="${x}" y="${mt + ph + 20}" text-anchor="middle" font-size="11" fill="${BC.text2}">${Math.round(v)}</text>
+      <line x1="${x}" y1="${mt}" x2="${x}" y2="${mt + ph}" stroke="${BC.border}" stroke-width="0.5"/>`;
+    const bv = maxB * 1.1 * i / 5, y = yS(bv).toFixed(1);
     yt += `<text x="${ml - 8}" y="${y}" text-anchor="end" font-size="11" fill="${BC.text2}" dominant-baseline="middle">${Math.round(bv)}</text>
-      <line x1="${ml}" y1="${y}" x2="${ml + pw}" y2="${y}" stroke="${BC.border}" stroke-width="0.6"/>`;
+      <line x1="${ml}" y1="${y}" x2="${ml + pw}" y2="${y}" stroke="${BC.border}" stroke-width="0.5"/>`;
   }
 
   container.innerHTML = mkSvg(W, H, `
-    <text x="${W / 2}" y="26" text-anchor="middle" font-size="15" font-weight="700" fill="${BC.text}">ゾーン分析</text>
-    ${quads}${xt}${yt}${dots}${zLabels}
+    <text x="${W / 2}" y="28" text-anchor="middle" font-size="15" font-weight="700" fill="${BC.text}">ゾーン分析（テスト数 × バグ数）</text>
+    ${zoneBg}${dividers}${xt}${yt}${dots}${zoneLabels}
     <line x1="${ml}" y1="${mt}" x2="${ml}" y2="${mt + ph}" stroke="${BC.border}" stroke-width="1"/>
     <line x1="${ml}" y1="${mt + ph}" x2="${ml + pw}" y2="${mt + ph}" stroke="${BC.border}" stroke-width="1"/>
-    <text x="${ml + pw / 2}" y="${mt + ph + 50}" text-anchor="middle" font-size="12" fill="${BC.text2}">テスト工数 (h)</text>
-    <text x="${ml - 54}" y="${mt + ph / 2}" text-anchor="middle" font-size="12" fill="${BC.text2}" transform="rotate(-90,${ml - 54},${mt + ph / 2})">不具合件数</text>
+    <text x="${ml + pw / 2}" y="${mt + ph + 52}" text-anchor="middle" font-size="12" fill="${BC.text2}">テスト数</text>
+    <text x="${ml - 58}" y="${mt + ph / 2}" text-anchor="middle" font-size="12" fill="${BC.text2}" transform="rotate(-90,${ml - 58},${mt + ph / 2})">バグ数</text>
   `);
 }
 
