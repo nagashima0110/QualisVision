@@ -189,6 +189,20 @@
     .dash-chart-title { font-size: 12px; font-weight: 600; color: var(--text2); margin-bottom: 8px; }
 
     /* 信頼性成長曲線 */
+    .growth-filter-bar {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px;
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 10px 16px; margin-bottom: 16px;
+    }
+    .growth-filter-label {
+      font-size: 12px; font-weight: 600; color: var(--text2); white-space: nowrap;
+    }
+    .growth-filter-sep { color: var(--border); }
+    .growth-filter-item {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 13px; cursor: pointer; user-select: none;
+    }
+    .growth-filter-item input[type="checkbox"] { cursor: pointer; accent-color: var(--accent); }
     .growth-info {
       display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px;
     }

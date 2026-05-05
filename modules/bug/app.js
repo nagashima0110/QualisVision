@@ -522,28 +522,110 @@ function renderParetoTab() {
 // ========== 信頼性成長曲線タブ ==========
 
 function renderGrowthTab() {
-  const r = analysisResult;
   const el = document.getElementById('tab-growth');
-  if (!r.timeSeries) {
-    el.innerHTML = '<p class="no-data">信頼性成長曲線を描画するには発見日の列マッピングが必要です（3件以上のデータ）。</p>';
+
+  // 重大度の一覧を実データから収集
+  const severities = [...new Set(bugs.map(b => b.severity).filter(Boolean))].sort();
+
+  // 重大度フィルターUIを生成（重大度列がマッピングされている場合のみ表示）
+  const filterHtml = severities.length > 0 ? `
+    <div class="growth-filter-bar">
+      <span class="growth-filter-label">重大度フィルター：</span>
+      <label class="growth-filter-item">
+        <input type="checkbox" id="growthSevAll" checked onchange="onGrowthAllToggle(this)">
+        <span>全て</span>
+      </label>
+      <span class="growth-filter-sep">|</span>
+      ${severities.map(s => {
+        const safe = escHtml(s);
+        return `<label class="growth-filter-item">
+          <input type="checkbox" class="growth-sev-cb" value="${safe}" checked onchange="onGrowthSevChange()">
+          <span>${safe}</span>
+        </label>`;
+      }).join('')}
+    </div>` : '';
+
+  el.innerHTML = `
+    ${filterHtml}
+    <div class="chart-card full-width"><div class="chart-area" id="growthMainChart"></div></div>
+    <div class="growth-info" id="growthInfoCards"></div>`;
+
+  drawGrowthChart();
+}
+
+// 「全て」チェックボックス変更時
+function onGrowthAllToggle(cb) {
+  document.querySelectorAll('.growth-sev-cb').forEach(c => { c.checked = cb.checked; });
+  drawGrowthChart();
+}
+
+// 個別重大度チェックボックス変更時
+function onGrowthSevChange() {
+  const cbs = [...document.querySelectorAll('.growth-sev-cb')];
+  const allCb = document.getElementById('growthSevAll');
+  if (allCb) allCb.checked = cbs.every(c => c.checked);
+  drawGrowthChart();
+}
+
+// 重大度フィルターを適用してチャートを再描画
+function drawGrowthChart() {
+  const engine = window.BugAnalysisEngine;
+  const BC = window.BugCharts;
+  const cbs = [...document.querySelectorAll('.growth-sev-cb')];
+
+  // フィルター適用：全選択か重大度未マッピングなら全件、一部選択なら該当のみ
+  let filteredBugs;
+  const allChecked = cbs.length === 0 || cbs.every(c => c.checked);
+  if (allChecked) {
+    filteredBugs = bugs;
+  } else {
+    const selected = new Set(cbs.filter(c => c.checked).map(c => c.value));
+    if (selected.size === 0) {
+      // 何も選択されていない場合はメッセージを表示
+      document.getElementById('growthMainChart').innerHTML =
+        '<p class="no-data" style="padding:60px 0;">重大度を1つ以上選択してください。</p>';
+      document.getElementById('growthInfoCards').innerHTML = '';
+      return;
+    }
+    filteredBugs = bugs.filter(b => b.severity && selected.has(b.severity));
+  }
+
+  // フィルター結果が少なすぎる場合
+  const ts = engine.buildTimeSeries(filteredBugs);
+  if (!ts) {
+    document.getElementById('growthMainChart').innerHTML =
+      '<p class="no-data" style="padding:60px 0;">選択した重大度のバグが少なすぎます（発見日付き3件以上必要）。</p>';
+    document.getElementById('growthInfoCards').innerHTML = '';
     return;
   }
-  el.innerHTML = '<div class="chart-card full-width"><div class="chart-area" id="growthMainChart"></div></div>';
-  el.innerHTML += `<div class="growth-info">
-    ${r.gompertz ? `<div class="info-card"><b>ゴンペルツ曲線</b><br>総バグ予測: ${Math.round(r.gompertz.total)}件<br>95%収束: 第${r.gompertz.t95 ?? '—'}週<br>MSE: ${Math.round(r.gompertz.mse)}</div>` : ''}
-    ${r.logistic ? `<div class="info-card"><b>ロジスティック曲線</b><br>総バグ予測: ${Math.round(r.logistic.total)}件<br>95%収束: 第${r.logistic.t95 ?? '—'}週<br>MSE: ${Math.round(r.logistic.mse)}</div>` : ''}
-  </div>`;
-  el.innerHTML = `<div class="chart-card full-width"><div class="chart-area" id="growthMainChart"></div></div>
-    <div class="growth-info">
-      ${r.gompertz ? `<div class="info-card"><b>ゴンペルツ曲線</b><br>総バグ予測: ${Math.round(r.gompertz.total)}件<br>95%収束: 第${r.gompertz.t95 ?? '—'}週<br>MSE: ${Math.round(r.gompertz.mse)}</div>` : ''}
-      ${r.logistic ? `<div class="info-card"><b>ロジスティック曲線</b><br>総バグ予測: ${Math.round(r.logistic.total)}件<br>95%収束: 第${r.logistic.t95 ?? '—'}週<br>MSE: ${Math.round(r.logistic.mse)}</div>` : ''}
-    </div>`;
-  window.BugCharts.renderLineChart(
+
+  // モデルフィッティング
+  const gompertz = engine.fitGompertz(ts.series);
+  const logistic  = engine.fitLogistic(ts.series);
+
+  // 選択中ラベルをタイトルに反映
+  let chartTitle = '累積バグ数と信頼性成長曲線';
+  if (!allChecked) {
+    const labels = cbs.filter(c => c.checked).map(c => c.value).join('・');
+    chartTitle += `（${labels}）`;
+  }
+
+  BC.renderLineChart(
     document.getElementById('growthMainChart'),
-    r.timeSeries.series,
-    [r.gompertz, r.logistic].filter(Boolean),
-    '累積バグ数と信頼性成長曲線'
+    ts.series,
+    [gompertz, logistic].filter(Boolean),
+    chartTitle
   );
+
+  // モデル情報カード更新
+  document.getElementById('growthInfoCards').innerHTML = `
+    ${gompertz ? `<div class="info-card"><b>ゴンペルツ曲線</b><br>総バグ予測: ${Math.round(gompertz.total)}件<br>95%収束: 第${gompertz.t95 ?? '—'}週<br>MSE: ${Math.round(gompertz.mse)}</div>` : ''}
+    ${logistic  ? `<div class="info-card"><b>ロジスティック曲線</b><br>総バグ予測: ${Math.round(logistic.total)}件<br>95%収束: 第${logistic.t95 ?? '—'}週<br>MSE: ${Math.round(logistic.mse)}</div>` : ''}`;
+}
+
+// HTMLエスケープユーティリティ
+function escHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // ========== DREタブ ==========
